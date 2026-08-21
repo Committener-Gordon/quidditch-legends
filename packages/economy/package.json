@@ -1,0 +1,9 @@
+{
+  "name": "@ql/economy",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pure economic rules: wages, income, facilities, training costs",
+  "type": "module",
+  "exports": { ".": { "types": "./src/index.ts", "default": "./src/index.ts" } },
+  "dependencies": { "@ql/sim": "*" }
+}

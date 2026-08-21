@@ -1,0 +1,11 @@
+{
+  "name": "@ql/sim",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pure, dependency-free Quidditch match simulator",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./src/index.ts", "default": "./src/index.ts" } },
+  "dependencies": {}
+}

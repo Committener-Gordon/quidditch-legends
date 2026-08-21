@@ -1,0 +1,383 @@
+/**
+ * Routing, including everything that writes.
+ *
+ * Two rules hold throughout. A GET never mutates, so the whole read side stays
+ * cacheable and safe to reload. And every POST is checked for same-origin, then
+ * answers with a redirect rather than a body, so a refresh after submitting a team
+ * does not submit it again.
+ */
+
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import { eq } from 'drizzle-orm';
+import { rulesByVersion, type Attribute, type Tactics } from '@ql/sim';
+import type { FacilityKind, TrainingIntensity } from '@ql/economy';
+import {
+  authenticate,
+  claimClub,
+  clubs,
+  createSession,
+  currentSeason,
+  destroySession,
+  fixtures,
+  isPastDeadline,
+  players,
+  purchaseFacility,
+  registerUser,
+  saveLineup,
+  sessionUser,
+  setTrainingOrder,
+  toTactics,
+  unclaimedClubs,
+  validateSelection,
+  type Database,
+  type DbHandle,
+  type LineupSelection,
+  type SessionUser,
+} from '@ql/db';
+import { and, isNull } from 'drizzle-orm';
+import { page } from './layout.js';
+import {
+  clubPage,
+  clubsPage,
+  fixturesPage,
+  leadersPage,
+  matchPage,
+  tablePage,
+  type Shell,
+} from './pages.js';
+import {
+  claimPage,
+  dashboardPage,
+  facilitiesPage,
+  financesPage,
+  lineupPage,
+  loginPage,
+  registerPage,
+  squadPage,
+  tacticsPage,
+  trainingPage,
+} from './manage.js';
+import {
+  SESSION_COOKIE,
+  clearCookie,
+  field,
+  readCookie,
+  readForm,
+  redirect,
+  sameOrigin,
+  setCookie,
+  withNotice,
+} from './http.js';
+
+const UUID = '[0-9a-f-]{36}';
+
+function notFound(shell: Shell): string {
+  return page(
+    { ...shell, title: 'Not found' },
+    '<section><div class="card"><p class="note">There is nothing at that address.</p><p><a href="/">Back to the table</a></p></div></section>',
+  );
+}
+
+function needsSignIn(shell: Shell): string {
+  return page(
+    { ...shell, title: 'Sign in first' },
+    '<section><div class="card"><p class="note">You need an account to run a club.</p><p><a href="/login">Sign in</a> or <a href="/register">create one</a>.</p></div></section>',
+  );
+}
+
+function html(response: ServerResponse, status: number, body: string): void {
+  response.writeHead(status, {
+    'content-type': 'text/html; charset=utf-8',
+    'cache-control': 'no-store',
+  });
+  response.end(body);
+}
+
+export interface RouterOptions {
+  port: number;
+}
+
+export async function handle(
+  db: Database,
+  request: IncomingMessage,
+  response: ServerResponse,
+  options: RouterOptions,
+): Promise<void> {
+  const url = new URL(request.url ?? '/', `http://localhost:${options.port}`);
+  const path = url.pathname.replace(/\/+$/, '') || '/';
+  const token = readCookie(request, SESSION_COOKIE);
+  const user = await sessionUser(db, token);
+
+  const notice = url.searchParams.get('ok')
+    ? { text: url.searchParams.get('ok')!, kind: 'ok' as const }
+    : url.searchParams.get('problem')
+      ? { text: url.searchParams.get('problem')!, kind: 'problem' as const }
+      : null;
+
+  const shell: Shell = {
+    user: user ? { displayName: user.displayName, clubId: user.clubId } : null,
+    notice,
+  };
+
+  if (request.method === 'POST') {
+    if (!sameOrigin(request, options.port)) {
+      html(response, 403, page({ ...shell, title: 'Refused' }, '<section><div class="card"><p class="note">That request did not come from this site.</p></div></section>'));
+      return;
+    }
+    await post(db, request, response, path, user, token, shell);
+    return;
+  }
+
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    html(response, 405, notFound(shell));
+    return;
+  }
+
+  await get(db, response, path, url, user, shell);
+}
+
+// --- reads ------------------------------------------------------------------
+
+async function get(
+  db: Database,
+  response: ServerResponse,
+  path: string,
+  url: URL,
+  user: SessionUser | null,
+  shell: Shell,
+): Promise<void> {
+  switch (path) {
+    case '/':
+    case '/table':
+      return html(response, 200, await tablePage(db, shell));
+    case '/fixtures':
+      return html(response, 200, await fixturesPage(db, false, shell));
+    case '/results':
+      return html(response, 200, await fixturesPage(db, true, shell));
+    case '/leaders':
+      return html(response, 200, await leadersPage(db, shell));
+    case '/clubs':
+      return html(response, 200, await clubsPage(db, shell));
+    case '/login':
+      return html(response, 200, user ? redirectBody('/my') : loginPage(shell));
+    case '/register':
+      return html(response, 200, user ? redirectBody('/my') : registerPage(shell));
+    default:
+      break;
+  }
+
+  const match = new RegExp(`^/match/(${UUID})$`).exec(path);
+  if (match) {
+    const body = await matchPage(db, match[1]!, shell);
+    return html(response, body ? 200 : 404, body ?? notFound(shell));
+  }
+
+  const club = new RegExp(`^/club/(${UUID})$`).exec(path);
+  if (club) {
+    const body = await clubPage(db, club[1]!, shell);
+    return html(response, body ? 200 : 404, body ?? notFound(shell));
+  }
+
+  // Everything below needs an account.
+  if (path === '/claim' || path.startsWith('/my')) {
+    if (!user) return html(response, 401, needsSignIn(shell));
+    const context = { db, user, shell };
+
+    if (path === '/claim') {
+      if (user.clubId) return redirect(response, '/my');
+      return html(response, 200, await claimPage(context, await unclaimedClubs(db)));
+    }
+
+    if (!user.clubId) return redirect(response, '/claim');
+
+    switch (path) {
+      case '/my':
+        return html(response, 200, await dashboardPage(context, user.clubId));
+      case '/my/tactics':
+        return html(response, 200, await tacticsPage(context, user.clubId));
+      case '/my/training':
+        return html(response, 200, await trainingPage(context, user.clubId));
+      case '/my/facilities':
+        return html(response, 200, await facilitiesPage(context, user.clubId));
+      case '/my/finances':
+        return html(response, 200, await financesPage(context, user.clubId));
+      case '/my/squad':
+        return html(response, 200, await squadPage(context, user.clubId));
+      case '/my/lineup': {
+        const fixtureId = url.searchParams.get('fixture');
+        if (!fixtureId) return redirect(response, '/my');
+        const body = await lineupPage(context, user.clubId, fixtureId);
+        return html(response, body ? 200 : 404, body ?? notFound(shell));
+      }
+      default:
+        return html(response, 404, notFound(shell));
+    }
+  }
+
+  return html(response, 404, notFound(shell));
+}
+
+function redirectBody(to: string): string {
+  return `<!doctype html><meta http-equiv="refresh" content="0;url=${to}">`;
+}
+
+// --- writes -----------------------------------------------------------------
+
+async function post(
+  db: Database,
+  request: IncomingMessage,
+  response: ServerResponse,
+  path: string,
+  user: SessionUser | null,
+  token: string | null,
+  shell: Shell,
+): Promise<void> {
+  const form = await readForm(request);
+
+  if (path === '/login') {
+    const result = await authenticate(db, field(form, 'email'), field(form, 'password'));
+    if (!result.ok || !result.userId) {
+      return html(response, 401, loginPage(shell, result.error));
+    }
+    const session = await createSession(db, result.userId);
+    setCookie(response, SESSION_COOKIE, session.token, { expires: session.expiresAt });
+    return redirect(response, '/my');
+  }
+
+  if (path === '/register') {
+    const result = await registerUser(db, {
+      email: field(form, 'email'),
+      displayName: field(form, 'displayName'),
+      password: field(form, 'password'),
+    });
+    if (!result.ok || !result.userId) {
+      return html(response, 400, registerPage(shell, result.error));
+    }
+    const session = await createSession(db, result.userId);
+    setCookie(response, SESSION_COOKIE, session.token, { expires: session.expiresAt });
+    return redirect(response, '/claim');
+  }
+
+  if (path === '/logout') {
+    await destroySession(db, token);
+    clearCookie(response, SESSION_COOKIE);
+    return redirect(response, '/');
+  }
+
+  if (!user) return html(response, 401, needsSignIn(shell));
+
+  if (path === '/claim') {
+    const result = await claimClub(db, user.id, field(form, 'clubId'));
+    return redirect(
+      response,
+      result.ok
+        ? withNotice('/my', 'You are in charge. Pick a team for your next match.')
+        : withNotice('/claim', result.error ?? 'that did not work', 'problem'),
+    );
+  }
+
+  if (!user.clubId) return redirect(response, '/claim');
+  const clubId = user.clubId;
+
+  if (path === '/my/lineup') {
+    return postLineup(db, response, form, clubId, user);
+  }
+
+  if (path === '/my/tactics') {
+    const [club] = await db.select({ tactics: clubs.tactics }).from(clubs).where(eq(clubs.id, clubId));
+    const current = toTactics(club?.tactics);
+    const next: Tactics = {
+      aggression: pick(field(form, 'aggression'), ['defensive', 'balanced', 'attacking'], current.aggression),
+      seekerCommitment: pick(field(form, 'seekerCommitment'), ['hunt', 'balanced', 'support'], current.seekerCommitment),
+      beaterFocus: pick(field(form, 'beaterFocus'), ['seeker', 'chasers', 'protect'], current.beaterFocus),
+      chaseTheGame: field(form, 'chaseTheGame') !== 'no',
+    };
+    await db.update(clubs).set({ tactics: next }).where(eq(clubs.id, clubId));
+    return redirect(response, withNotice('/my/tactics', 'Tactics saved.'));
+  }
+
+  if (path === '/my/training') {
+    const season = await currentSeason(db);
+    if (!season) return redirect(response, withNotice('/my/training', 'no season is running', 'problem'));
+    const focus = field(form, 'focus');
+    const intensity = pick(field(form, 'intensity'), ['light', 'normal', 'hard'], 'normal') as TrainingIntensity;
+    await setTrainingOrder(db, clubId, season.id, focus === '' ? null : (focus as Attribute), intensity);
+    return redirect(response, withNotice('/my/training', 'Training order set for the season.'));
+  }
+
+  if (path === '/my/facilities') {
+    const season = await currentSeason(db);
+    const kind = field(form, 'kind') as FacilityKind;
+    const outcome = await purchaseFacility(db, clubId, kind, season?.id ?? null);
+    return redirect(
+      response,
+      outcome.ok
+        ? withNotice('/my/facilities', `Upgraded to level ${outcome.level} for ${outcome.cost.toLocaleString()} Galleons.`)
+        : withNotice('/my/facilities', outcome.reason, 'problem'),
+    );
+  }
+
+  return html(response, 404, notFound(shell));
+}
+
+async function postLineup(
+  db: Database,
+  response: ServerResponse,
+  form: Map<string, string[]>,
+  clubId: string,
+  user: SessionUser,
+): Promise<void> {
+  const fixtureId = field(form, 'fixtureId');
+  const [fixture] = await db.select().from(fixtures).where(eq(fixtures.id, fixtureId));
+  const back = `/my/lineup?fixture=${fixtureId}`;
+
+  if (!fixture || (fixture.homeClubId !== clubId && fixture.awayClubId !== clubId)) {
+    return redirect(response, withNotice('/my', 'that is not one of your fixtures', 'problem'));
+  }
+  // The deadline is enforced here, once, on the server. The form disables itself
+  // too, but that is a courtesy rather than the rule.
+  if (isPastDeadline(fixture.kickoffAt) || fixture.status !== 'scheduled') {
+    return redirect(response, withNotice(back, 'the deadline for that match has passed', 'problem'));
+  }
+
+  const selection: LineupSelection = {
+    keeper: field(form, 'keeper'),
+    seeker: field(form, 'seeker'),
+    chasers: [field(form, 'chaser1'), field(form, 'chaser2'), field(form, 'chaser3')].filter(Boolean),
+    beaters: [field(form, 'beater1'), field(form, 'beater2')].filter(Boolean),
+  };
+
+  const roster = await db
+    .select()
+    .from(players)
+    .where(and(eq(players.clubId, clubId), isNull(players.retiredInSeason)));
+
+  const onDate = fixture.kickoffAt.toISOString().slice(0, 10);
+  const check = validateSelection(selection, roster, onDate);
+  if (!check.ok) {
+    return redirect(response, withNotice(back, check.errors[0] ?? 'that team is not valid', 'problem'));
+  }
+
+  const chosen = new Set([selection.keeper, selection.seeker, ...selection.chasers, ...selection.beaters]);
+  const bench = roster
+    .filter((row) => !chosen.has(row.id) && (!row.injuredUntil || row.injuredUntil <= onDate))
+    .sort((left, right) => right.stamina - left.stamina)
+    .map((row) => row.id);
+
+  await saveLineup(db, {
+    fixtureId,
+    clubId,
+    selection,
+    bench,
+    submittedBy: user.id,
+  });
+
+  return redirect(response, withNotice(back, 'Team submitted.'));
+}
+
+function pick<T extends string>(value: string, allowed: readonly T[], fallback: T): T {
+  return (allowed as readonly string[]).includes(value) ? (value as T) : fallback;
+}
+
+export { rulesByVersion };
+export type { DbHandle };

@@ -1,0 +1,21 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": [
+    "src/**/*.ts"
+  ],
+  "references": [
+    {
+      "path": "../../packages/sim"
+    },
+    {
+      "path": "../../packages/economy"
+    },
+    {
+      "path": "../../packages/db"
+    }
+  ]
+}

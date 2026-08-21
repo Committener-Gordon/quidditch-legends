@@ -1,0 +1,55 @@
+{
+  "name": "quidditch-legends",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Browser-based Quidditch manager game",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "match": "tsx packages/harness/src/cli.ts match",
+    "balance": "tsx packages/harness/src/cli.ts balance",
+    "matrix": "tsx packages/harness/src/cli.ts matrix",
+    "dials": "tsx packages/harness/src/cli.ts dials",
+    "test": "tsx --test packages/sim/test/*.test.ts apps/worker/test/*.test.ts",
+    "typecheck": "tsc -b packages/sim packages/economy packages/db packages/harness apps/worker apps/web",
+    "world:new": "tsx apps/worker/src/cli.ts world:new",
+    "season:new": "tsx apps/worker/src/cli.ts season:new",
+    "matchday": "tsx apps/worker/src/cli.ts matchday",
+    "season:run": "tsx apps/worker/src/cli.ts season:run",
+    "offseason": "tsx apps/worker/src/cli.ts offseason",
+    "cycle": "tsx apps/worker/src/cli.ts cycle",
+    "table": "tsx apps/worker/src/cli.ts table",
+    "fixtures": "tsx apps/worker/src/cli.ts fixtures",
+    "leaders": "tsx apps/worker/src/cli.ts leaders",
+    "report": "tsx apps/worker/src/cli.ts report",
+    "status": "tsx apps/worker/src/cli.ts status",
+    "world:reset": "tsx apps/worker/src/cli.ts world:reset",
+    "db:generate": "drizzle-kit generate --config packages/db/drizzle.config.ts",
+    "tactics": "tsx packages/harness/src/cli.ts tactics",
+    "web": "tsx apps/web/src/server.ts",
+    "db:serve": "tsx packages/db/src/serve.ts",
+    "db:migrate": "tsx packages/db/src/migrate.ts",
+    "finances": "tsx apps/worker/src/cli.ts finances",
+    "claim": "tsx apps/worker/src/cli.ts claim",
+    "reprice": "tsx apps/worker/src/cli.ts reprice",
+    "web:shared": "PG_POOL_MAX=1 PG_POOL_IDLE_MS=250 DATABASE_URL=postgres://postgres@127.0.0.1:5432/postgres tsx apps/web/src/server.ts",
+    "worker:shared": "PG_POOL_MAX=1 PG_POOL_IDLE_MS=250 DATABASE_URL=postgres://postgres@127.0.0.1:5432/postgres tsx apps/worker/src/cli.ts"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite-socket": "^0.2.8",
+    "@types/node": "^22.10.2",
+    "@types/pg": "^8.23.1",
+    "drizzle-kit": "^0.31.10",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.5.5",
+    "drizzle-orm": "^0.45.2",
+    "pg": "^8.23.0"
+  }
+}

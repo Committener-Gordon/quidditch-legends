@@ -1,0 +1,12 @@
+{
+  "name": "@ql/worker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Scheduled jobs: matchdays, standings, the off-season",
+  "type": "module",
+  "dependencies": {
+    "@ql/db": "*",
+    "@ql/sim": "*",
+    "@ql/economy": "*"
+  }
+}

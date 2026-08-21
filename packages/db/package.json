@@ -1,0 +1,18 @@
+{
+  "name": "@ql/db",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Schema, migrations and queries for Quidditch Legends",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "dependencies": {
+    "@ql/sim": "*",
+    "drizzle-orm": "^0.45.2",
+    "@ql/economy": "*"
+  }
+}
