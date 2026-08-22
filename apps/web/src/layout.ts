@@ -137,6 +137,12 @@ export interface LayoutOptions {
   user?: { displayName: string; clubId: string | null } | null;
   /** One-line result carried through a redirect. */
   notice?: { text: string; kind: 'ok' | 'problem' } | null;
+  /**
+   * Reload the page every N seconds. Used only while a match is being revealed --
+   * a meta refresh keeps the whole app free of client-side JavaScript, and a
+   * finished page has no reason to reload at all.
+   */
+  refreshSeconds?: number;
 }
 
 const NAV: [string, string][] = [
@@ -169,6 +175,7 @@ export function page(options: LayoutOptions, body: string): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+${options.refreshSeconds ? `<meta http-equiv="refresh" content="${options.refreshSeconds}">` : ''}
 <title>${escapeHtml(options.title)} &middot; Quidditch Legends</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>

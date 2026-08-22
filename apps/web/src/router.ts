@@ -20,6 +20,7 @@ import {
   destroySession,
   fixtures,
   isPastDeadline,
+  seasons,
   players,
   purchaseFacility,
   registerUser,
@@ -45,7 +46,7 @@ import {
   tablePage,
   type Shell,
 } from './pages.js';
-import { newSeason, runMatchday, runOffseason } from '@ql/worker/jobs';
+import { newSeason, runMatchday, runOffseason, settleWorld } from '@ql/worker/jobs';
 import {
   claimPage,
   dashboardPage,
@@ -104,6 +105,10 @@ export async function handle(
   response: ServerResponse,
   options: RouterOptions,
 ): Promise<void> {
+  // Let time catch up before anything is read: any match whose playback has run
+  // out becomes official here. Idempotent, and free once there is nothing due.
+  await settleWorld(db);
+
   const url = new URL(request.url ?? '/', `http://localhost:${options.port}`);
   const path = url.pathname.replace(/\/+$/, '') || '/';
   const token = readCookie(request, SESSION_COOKIE);
@@ -371,7 +376,17 @@ async function postPlay(
     return redirect(response, withNotice('/my', `matchday ${next.matchday} is next`, 'problem'));
   }
 
-  const result = await runMatchday(db, { seasonNumber: season.number, matchday });
+  // How long the matches should take to play out on screen. Remembered on the
+  // season so the choice sticks.
+  const asked_seconds = field(form, 'playback');
+  const playbackSeconds = /^\d+$/.test(asked_seconds)
+    ? Math.min(3600, Number(asked_seconds))
+    : season.playbackSeconds;
+  if (playbackSeconds !== season.playbackSeconds) {
+    await db.update(seasons).set({ playbackSeconds }).where(eq(seasons.id, season.id));
+  }
+
+  const result = await runMatchday(db, { seasonNumber: season.number, matchday, playbackSeconds });
 
   // Report the player's own fixture, not whichever happened to be first.
   const [ours] = await db
@@ -385,10 +400,14 @@ async function postPlay(
       ),
     );
   const line = result.lines.find((entry) => entry.fixtureId === ours?.id);
+
+  // Straight to the feed if there is something to watch; otherwise the score.
+  if (playbackSeconds > 0 && line) {
+    return redirect(response, `/match/${line.matchId}`);
+  }
   const summary = line
     ? `Matchday ${matchday}: ${line.home} ${line.homePoints}-${line.awayPoints} ${line.away}`
     : `Matchday ${matchday} played.`;
-
   return redirect(response, withNotice('/my', summary));
 }
 

@@ -50,6 +50,15 @@ import {
   type SessionUser,
 } from '@ql/db';
 import { escapeHtml, page, tableHtml, type LayoutOptions } from './layout.js';
+import { liveNow } from './pages.js';
+
+/** How long a matchday takes to play out on screen. */
+const PLAYBACK_CHOICES: [number, string][] = [
+  [0, 'no wait — show me the result'],
+  [60, '1 minute'],
+  [180, '3 minutes'],
+  [600, '10 minutes'],
+];
 
 const ATTRIBUTES: Attribute[] = [
   'flying',
@@ -202,8 +211,16 @@ export async function dashboardPage(context: Context, clubId: string): Promise<s
         ${locked ? '<p class="deadline">Closed</p>' : `<a class="buttonlink" href="/my/lineup?fixture=${fixture.id}">${lineup ? 'Change the team' : 'Pick the team'}</a>`}
         ${
           isNext && manual
-            ? `<form method="post" action="/my/play" style="margin-top:4px">
+            ? `<form method="post" action="/my/play" style="margin-top:4px;gap:9px">
                  <input type="hidden" name="matchday" value="${fixture.matchday}">
+                 <label style="font-size:.74rem">watch it over
+                   <select name="playback">
+                     ${PLAYBACK_CHOICES.map(
+                       ([seconds, label]) =>
+                         `<option value="${seconds}"${(season?.playbackSeconds ?? 180) === seconds ? ' selected' : ''}>${label}</option>`,
+                     ).join('')}
+                   </select>
+                 </label>
                  <button class="primary" type="submit">Play matchday ${fixture.matchday}</button>
                </form>`
             : ''
@@ -217,9 +234,30 @@ export async function dashboardPage(context: Context, clubId: string): Promise<s
   const weeklyIncome = 6000 + Math.round(stadiumCapacity(club.stadiumCapacity, levels.stadium) * 0.72 * 1.5);
   const wageShare = weeklyIncome > 0 ? Math.round((wageBill / weeklyIncome) * 100) : 0;
 
+  const running = season ? await liveNow(db, season.id) : [];
+  const ourLive = running.find(
+    (match) => match.homeClubId === clubId || match.awayClubId === clubId,
+  );
+
   return page(
-    { ...context.shell, title: club.name, active: '/my', subtitle: 'Your club' },
-    `<section>
+    {
+      ...context.shell,
+      title: club.name,
+      active: '/my',
+      subtitle: 'Your club',
+      ...(ourLive ? { refreshSeconds: 10 } : {}),
+    },
+    `${
+      ourLive
+        ? `<section><div class="card livecard">
+             <p class="livetag" style="justify-content:flex-start">Live now</p>
+             <h3>${escapeHtml(ourLive.home.name)} v ${escapeHtml(ourLive.away.name)}</h3>
+             <p class="note">${ourLive.playback.minute}' of ${ourLive.playback.totalMinutes} &middot; ${Math.ceil(ourLive.playback.secondsRemaining)}s left</p>
+             <a class="buttonlink" href="/match/${ourLive.matchId}">Watch it</a>
+           </div></section>`
+        : ''
+    }
+     <section>
        <dl class="kv">
          <div><dt>Balance</dt><dd>${galleons(balance)}</dd></div>
          <div><dt>Wage bill / week</dt><dd>${galleons(-wageBill)}</dd></div>

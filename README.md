@@ -53,6 +53,26 @@ the next one.
 
 Nothing else has to be running. The site plays the matchday itself.
 
+### Watching a match
+
+A matchday can play out over real time — three minutes by default, or whatever you
+pick when you press play. You land on a live feed: goals with the scorer and who
+set them up, snitch catches, the saves worth mentioning, injuries and substitutions,
+with a running score and a clock.
+
+The match is still simulated in a few milliseconds. What takes three minutes is
+**telling you about it**. Two things follow from that, and both are deliberate:
+
+- Nothing can go wrong halfway through. The result exists before the first line
+  of the feed appears, so a crash, a reload or a closed laptop costs you nothing.
+- The league table does not move until the match finishes, and neither do the
+  scorer charts. Both already filter on `matches.published_at`, which stays null
+  while a match is being revealed — so a match in progress cannot spoil itself
+  from the results page.
+
+Pick `no wait` on the play form to skip it, which is also what the bulk CLI
+commands do.
+
 ### Who owns the clock
 
 A season is created with one of two pacings, and it changes nothing about the
@@ -120,7 +140,7 @@ twice.
 | `npm run balance -- --n 100000` | Eleven targets, checked by histogram |
 | `npm run matrix` | Archetype round robin: is a squad shape a shortcut? |
 | `npm run tactics` | Tactics round robin: is a setting simply correct? |
-| `npm run test` / `typecheck` | 49 tests |
+| `npm run test` / `typecheck` | 54 tests |
 | **The economy** | |
 | `npm run finances` | Balances, wage bills, upkeep, and the snowball metric |
 | `npm run claim -- --email you@example.com --club ASH` | Hand a club to an account from the CLI |
@@ -326,7 +346,14 @@ intended. Stop that process, or use `npm run db:serve` to share one instance.
    what makes a payday job safe to run twice — there is a test that runs one twice
    and asserts the balance does not move.
 
-6. **A lineup closes on the server, once.** The form disables itself, but that is
+6. **A match in progress cannot spoil itself.** A live match is fully simulated
+   and stored, but `published_at` stays null until its playback window runs out.
+   The table, the scorer charts and the results list all key off that, so the only
+   way to see the score early is to watch the feed. `settleWorld()` promotes
+   finished matches lazily on any request, so the world settles itself whenever
+   anyone looks — no process has to be running for a match to end.
+
+7. **A lineup closes on the server, once.** The form disables itself, but that is
    a courtesy; the rule lives in the POST handler. Under `manual` pacing the only
    thing that closes a lineup is the match having been played — there is no clock to
    beat. Under `scheduled` pacing the deadline applies. Either way a submitted

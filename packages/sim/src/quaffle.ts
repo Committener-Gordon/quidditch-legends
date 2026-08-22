@@ -135,6 +135,7 @@ export function resolvePossession(ctx: MatchContext): void {
       side: defence.side,
       keeperId: defence.keeper.player.id,
       shooterId: shooter.player.id,
+      chance: Math.round(pGoal * 100) / 100,
     });
     return;
   }
@@ -163,5 +164,6 @@ export function resolvePossession(ctx: MatchContext): void {
     playerId: shooter.player.id,
     assistId,
     score: scoreOf(ctx),
+    chance: Math.round(pGoal * 100) / 100,
   });
 }

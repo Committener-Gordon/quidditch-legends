@@ -19,6 +19,7 @@ import { fixtureSeed, rulesByVersion, simulate, type MatchResult, type Squad } f
 import {
   buildSquadFromLineup,
   clubs,
+  settleFinishedMatches,
   fixtures,
   matchEvents,
   matches,
@@ -68,6 +69,12 @@ export interface RunMatchdayOptions {
   seasonNumber: number;
   matchday: number;
   world?: WorldRules;
+  /**
+   * Real seconds the matches take to play out on screen. Zero publishes the
+   * result at once, which is what the bulk CLI commands want. The simulation
+   * costs the same either way.
+   */
+  playbackSeconds?: number;
 }
 
 export async function runMatchday(
@@ -81,6 +88,7 @@ export async function runMatchday(
   if (season.state === 'complete') throw new Error(`season ${season.number} is already complete`);
 
   const rules = rulesByVersion(season.rulesVersion);
+  const playbackSeconds = Math.max(0, Math.round(options.playbackSeconds ?? 0));
 
   const slate = await db
     .select()
@@ -147,10 +155,19 @@ export async function runMatchday(
       { rules },
     );
 
-    const matchId = await persist(db, fixture, result, world, homeBuild.squad, awayBuild.squad, {
-      home: injuryRecoveryMultiplier(homeLevels.medicalWing),
-      away: injuryRecoveryMultiplier(awayLevels.medicalWing),
-    });
+    const matchId = await persist(
+      db,
+      fixture,
+      result,
+      world,
+      homeBuild.squad,
+      awayBuild.squad,
+      {
+        home: injuryRecoveryMultiplier(homeLevels.medicalWing),
+        away: injuryRecoveryMultiplier(awayLevels.medicalWing),
+      },
+      playbackSeconds,
+    );
 
     await postMatchIncome(db, {
       matchId,
@@ -289,6 +306,7 @@ async function persist(
   homeSquad: Squad,
   awaySquad: Squad,
   recovery: { home: number; away: number },
+  playbackSeconds: number,
 ): Promise<string> {
   return db.transaction(async (tx) => {
     // Defensive: a match row without a published fixture is debris from a crash
@@ -296,6 +314,10 @@ async function persist(
     await tx.delete(matches).where(eq(matches.fixtureId, fixture.id));
 
     const now = new Date();
+    // A match being revealed over time is simulated in full right now, but is not
+    // official until its playback runs out. `publishedAt` staying null is what
+    // keeps the table and the scorer charts from spoiling it.
+    const live = playbackSeconds > 0;
     const [match] = await tx
       .insert(matches)
       .values({
@@ -313,7 +335,9 @@ async function persist(
         homeShots: result.shots.home,
         awayShots: result.shots.away,
         simulatedAt: now,
-        publishedAt: now,
+        kickedOffAt: live ? now : null,
+        playbackSeconds,
+        publishedAt: live ? null : now,
       })
       .returning({ id: matches.id });
     if (!match) throw new Error('failed to write the match');
@@ -328,7 +352,10 @@ async function persist(
 
     await applyEffects(tx as unknown as Database, fixture, result, world, recovery);
 
-    await tx.update(fixtures).set({ status: 'published' }).where(eq(fixtures.id, fixture.id));
+    await tx
+      .update(fixtures)
+      .set({ status: live ? 'live' : 'published' })
+      .where(eq(fixtures.id, fixture.id));
     return match.id;
   });
 }
@@ -387,4 +414,18 @@ export async function runSeason(
     results.push(result);
   }
   return results;
+}
+
+/**
+ * Let time catch up with the world.
+ *
+ * Marks any match whose playback has run out as official and rebuilds the tables
+ * that changed. Called from web requests and from the worker, so the world settles
+ * itself whenever anyone looks -- no process has to be running for a match to
+ * finish.
+ */
+export async function settleWorld(db: Database): Promise<number> {
+  const divisions = await settleFinishedMatches(db);
+  for (const divisionId of divisions) await recomputeStandings(db, divisionId);
+  return divisions.length;
 }

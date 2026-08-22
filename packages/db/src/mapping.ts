@@ -133,6 +133,9 @@ function eventPlayers(event: MatchEvent): { playerId: string | null; secondary: 
 function eventPayload(event: MatchEvent): Record<string, unknown> | null {
   switch (event.type) {
     case 'GOAL':
+      return { score: event.score, chance: event.chance };
+    case 'SAVE':
+      return { chance: event.chance };
     case 'SNITCH_CAUGHT':
     case 'FULL_TIME':
       return { score: (event as { score: unknown }).score, ...('index' in event ? { index: event.index } : {}) };

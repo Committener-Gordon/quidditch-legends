@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 
-import { and, eq, isNull } from 'drizzle-orm';
-import { rulesByVersion } from '@ql/sim';
+import { and, eq, isNull, sql } from 'drizzle-orm';
+import { rulesByVersion, type MatchEvent } from '@ql/sim';
 import { upgradeCost, weeklyUpkeep } from '@ql/economy';
 import {
   authenticate,
@@ -21,8 +21,13 @@ import {
   isPastDeadline,
   ledgerEntries,
   lineupFor,
+  matches,
   openDatabase,
   players,
+  playbackOf,
+  revealedEvents,
+  scoreSoFar,
+  settleFinishedMatches,
   postEntry,
   purchaseFacility,
   registerUser,
@@ -37,6 +42,7 @@ import { createWorld } from '../src/jobs/createWorld.js';
 import { newSeason, reschedule } from '../src/jobs/newSeason.js';
 import { runMatchday } from '../src/jobs/matchday.js';
 import { isPayday, runPayday, weekOf } from '../src/jobs/finance.js';
+import { computeTable } from '../src/jobs/standings.js';
 import { deadlineMinutesFor, kickoffSchedule, parseInterval } from '../src/calendar.js';
 
 let handle: DbHandle;
@@ -412,5 +418,82 @@ describe('who owns the clock', () => {
       .orderBy(fixtures.matchday)
       .limit(1);
     assert.equal(next!.kickoffAt.toISOString(), '2030-06-01T09:00:00.000Z');
+  });
+});
+
+describe('watching a match unfold', () => {
+  const log: MatchEvent[] = [
+    { minute: 0, type: 'KICKOFF' },
+    { minute: 10, type: 'GOAL', side: 'home', playerId: 'a', assistId: null, score: { home: 10, away: 0 }, chance: 0.45 },
+    { minute: 40, type: 'SNITCH_CAUGHT', side: 'away', seekerId: 'b', index: 1, score: { home: 10, away: 30 } },
+    { minute: 70, type: 'GOAL', side: 'away', playerId: 'c', assistId: null, score: { home: 10, away: 40 }, chance: 0.41 },
+    { minute: 80, type: 'FULL_TIME', score: { home: 10, away: 40 } },
+  ];
+  const match = (elapsedSeconds: number) => ({
+    kickedOffAt: new Date(Date.now() - elapsedSeconds * 1000),
+    playbackSeconds: 100,
+    minutes: 80,
+    publishedAt: null,
+  });
+
+  it('reveals the match in proportion to the time elapsed', () => {
+    assert.equal(playbackOf(match(0)).phase, 'pending');
+    assert.equal(playbackOf(match(50)).phase, 'live');
+    assert.equal(playbackOf(match(50)).minute, 40);
+    assert.equal(playbackOf(match(101)).phase, 'final');
+    // A match with no playback window, or one already official, is simply final.
+    assert.equal(playbackOf({ ...match(1), playbackSeconds: 0 }).phase, 'final');
+    assert.equal(playbackOf({ ...match(1), publishedAt: new Date() }).phase, 'final');
+  });
+
+  it('shows only what has happened, and never full time early', () => {
+    const halfway = revealedEvents(log, playbackOf(match(50)));
+    assert.deepEqual(
+      halfway.map((event) => event.type),
+      ['KICKOFF', 'GOAL', 'SNITCH_CAUGHT'],
+      'the 70th-minute goal has not happened yet',
+    );
+    assert.equal(
+      halfway.some((event) => event.type === 'FULL_TIME'),
+      false,
+      'full time must never appear while a match is running',
+    );
+    assert.equal(revealedEvents(log, playbackOf(match(200))).length, log.length);
+  });
+
+  it('builds the running score from what is shown, not the final row', () => {
+    const halfway = revealedEvents(log, playbackOf(match(50)));
+    // 10-30 at this point. Reading the match row would give away 10-40.
+    assert.deepEqual(scoreSoFar(halfway, 10, 30), { home: 10, away: 30 });
+    assert.deepEqual(scoreSoFar(revealedEvents(log, playbackOf(match(200))), 10, 30), { home: 10, away: 40 });
+  });
+
+  it('keeps a live match out of the table until it finishes', async () => {
+    const fixture = await fixtureFor(2);
+    const played = await runMatchday(db, { seasonNumber: 1, matchday: 2, playbackSeconds: 600 });
+    assert.equal(played.played, 6);
+
+    const [row] = await db.select().from(fixtures).where(eq(fixtures.id, fixture.id));
+    assert.equal(row!.status, 'live');
+
+    // Nothing official yet, so the table cannot have moved.
+    const table = await computeTable(db, fixture.divisionId);
+    for (const entry of table) {
+      assert.equal(entry.played, 1, 'only matchday 1 should be counted while matchday 2 is live');
+    }
+
+    // Nothing is due yet either.
+    assert.equal((await settleFinishedMatches(db)).length, 0);
+
+    // Wind the clock back so the playback window has elapsed, then settle.
+    await db
+      .update(matches)
+      .set({ kickedOffAt: new Date(Date.now() - 700_000) })
+      .where(isNull(matches.publishedAt));
+
+    const settled = await settleFinishedMatches(db);
+    assert.equal(settled.length, 1, 'one division should have changed');
+    const after = await computeTable(db, fixture.divisionId);
+    for (const entry of after) assert.equal(entry.played, 2);
   });
 });

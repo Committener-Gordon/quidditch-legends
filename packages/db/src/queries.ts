@@ -52,6 +52,7 @@ export function toSimEvent(row: MatchEventRow): MatchEvent {
         playerId: row.playerId ?? '',
         assistId: row.secondaryPlayerId,
         score: score(payload),
+        chance: Number(payload?.['chance'] ?? 0.45),
       };
     case 'SAVE':
       return {
@@ -60,6 +61,7 @@ export function toSimEvent(row: MatchEventRow): MatchEvent {
         side,
         keeperId: row.playerId ?? '',
         shooterId: row.secondaryPlayerId ?? '',
+        chance: Number(payload?.['chance'] ?? 0.45),
       };
     case 'INTERCEPTION':
       return { minute, type: 'INTERCEPTION', side, playerId: row.playerId ?? '' };

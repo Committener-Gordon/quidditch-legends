@@ -70,6 +70,8 @@ export const fixtureStatusEnum = pgEnum('fixture_status', [
   'locked',
   'simulating',
   'simulated',
+  /** Simulated in full, but still being revealed minute by minute. */
+  'live',
   'published',
 ]);
 
@@ -176,6 +178,12 @@ export const seasons = pgTable('seasons', {
    */
   lineupDeadlineMinutes: integer('lineup_deadline_minutes').notNull().default(15),
   pacing: seasonPacingEnum('pacing').notNull().default('manual'),
+  /**
+   * Real seconds a match takes to play out on screen. Zero means the result
+   * appears at once. The match itself is simulated in a few milliseconds either
+   * way -- this only governs how fast the event log is revealed.
+   */
+  playbackSeconds: integer('playback_seconds').notNull().default(180),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -270,6 +278,20 @@ export const matches = pgTable(
     awayShots: integer('away_shots').notNull(),
 
     simulatedAt: timestamp('simulated_at', { withTimezone: true }).notNull().defaultNow(),
+    /**
+     * When the on-screen match began, and how long it runs for.
+     *
+     * The engine finishes in milliseconds; these two columns are what turn the
+     * finished event log into something that unfolds. Everything with a minute
+     * stamp past the elapsed share of `playbackSeconds` is simply not shown yet.
+     */
+    kickedOffAt: timestamp('kicked_off_at', { withTimezone: true }),
+    playbackSeconds: integer('playback_seconds').notNull().default(0),
+    /**
+     * When the result became official. Null while a match is still being
+     * revealed, which is what keeps the league table and the scorer charts from
+     * spoiling a match in progress -- both already filter on it.
+     */
     publishedAt: timestamp('published_at', { withTimezone: true }),
   },
   (table) => [index('matches_published_idx').on(table.publishedAt)],

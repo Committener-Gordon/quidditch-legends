@@ -88,6 +88,12 @@ export type MatchEvent =
       playerId: string;
       assistId: string | null;
       score: Score;
+      /**
+       * How likely the shot was to score, 0-1. Recorded so a report can tell a
+       * tap-in from something remarkable -- without it every goal and every save
+       * reads the same, and a match feed of a hundred identical saves is noise.
+       */
+      chance: number;
     }
   | {
       minute: number;
@@ -96,6 +102,8 @@ export type MatchEvent =
       side: Side;
       keeperId: string;
       shooterId: string;
+      /** How likely that shot was to score. A high number is a good save. */
+      chance: number;
     }
   | {
       minute: number;
