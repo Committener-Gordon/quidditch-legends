@@ -47,6 +47,7 @@ import {
   type Shell,
 } from './pages.js';
 import { newSeason, runMatchday, runOffseason, settleWorld } from '@ql/worker/jobs';
+import { guidePage } from './guide.js';
 import {
   claimPage,
   dashboardPage,
@@ -164,6 +165,8 @@ async function get(
       return html(response, 200, await leadersPage(db, shell));
     case '/clubs':
       return html(response, 200, await clubsPage(db, shell));
+    case '/guide':
+      return html(response, 200, guidePage(shell));
     case '/login':
       return html(response, 200, user ? redirectBody('/my') : loginPage(shell));
     case '/register':

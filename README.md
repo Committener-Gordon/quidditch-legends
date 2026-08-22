@@ -53,6 +53,17 @@ the next one.
 
 Nothing else has to be running. The site plays the matchday itself.
 
+### The guide
+
+The game explains itself at **/guide** — the play loop, what a scoreline is made
+of, the three contests inside a match, what each attribute does, where the money
+goes, and what is deliberately missing. Four hand-authored inline SVG diagrams
+that follow the site's light and dark themes.
+
+It lives in `apps/web/src/guide.ts`, so it ships with the code and is version
+controlled alongside the rules it describes. Every number in it is measured rather
+than designed — if you retune the sport, check they still hold.
+
 ### Watching a match
 
 A matchday can play out over real time — three minutes by default, or whatever you

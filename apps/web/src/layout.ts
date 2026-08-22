@@ -127,6 +127,92 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .slot { display: grid; grid-template-columns: 90px 1fr; gap: 12px; align-items: center; }
 .slot span.pos { font-family: "IBM Plex Mono", monospace; font-size: .68rem; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
 .deadline { font-family: "IBM Plex Mono", monospace; font-size: .8rem; color: var(--gold); }
+
+  /* --- a match being revealed ------------------------------------------- */
+  .livetag {
+    font-family: "IBM Plex Mono", monospace; font-size: .68rem; font-weight: 600;
+    letter-spacing: .16em; text-transform: uppercase; color: var(--risk);
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+  }
+  .livetag::before {
+    content: ""; width: 8px; height: 8px; border-radius: 50%;
+    background: var(--risk); animation: pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: .25 } }
+  @media (prefers-reduced-motion: reduce) { .livetag::before { animation: none } }
+
+  .clockrow { display: flex; align-items: center; gap: 14px; justify-content: center; flex-wrap: wrap; }
+  .bigmin {
+    font-family: "Bricolage Grotesque", sans-serif; font-weight: 800; font-size: 1.3rem;
+    font-variant-numeric: tabular-nums; min-width: 3ch; text-align: right;
+  }
+  .progress {
+    flex: 1; min-width: 160px; max-width: 460px; height: 6px;
+    background: var(--surface-2); border: 1px solid var(--line); border-radius: 4px; overflow: hidden;
+  }
+  .progress i { display: block; height: 100%; background: var(--gold); }
+  .remaining { font-family: "IBM Plex Mono", monospace; font-size: .8rem; color: var(--muted); }
+  .tl .pts { font-family: "IBM Plex Mono", monospace; font-size: .72rem; color: var(--gold); font-weight: 600; }
+  .tl.snitch { background: var(--gold-bg); }
+  .tl.goal { background: var(--surface-2); }
+  .tl.injury { background: var(--risk-bg); }
+  .tl.save .who, .tl.injury .who, .tl.sub .who { color: var(--muted); }
+  .livecard { border-left: 2px solid var(--risk); }
+
+  /* --- the guide -------------------------------------------------------- */
+  .col  { max-width: 66ch; }
+  .stack { display: flex; flex-direction: column; gap: 15px; }
+  .sec-head { display: flex; flex-direction: column; gap: 9px; padding-top: 18px; border-top: 1px solid var(--line); }
+  .lede { font-size: 1.28rem; line-height: 1.5; color: var(--ink-2); }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(272px, 1fr)); gap: 15px; }
+  .grid3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(208px, 1fr)); gap: 15px; }
+  ul.plain { margin: 0; padding-left: 1.15em; display: flex; flex-direction: column; gap: 7px; }
+  ul.plain li { font-size: .97rem; }
+  em.term { font-style: italic; color: var(--ink); }
+
+  .pull {
+    border-left: 2px solid var(--gold); background: var(--gold-bg);
+    border-radius: 0 4px 4px 0; padding: 17px 21px;
+    display: flex; flex-direction: column; gap: 7px;
+  }
+  .pull .eyebrow { color: var(--gold); }
+
+  /* diagrams: inline SVG that follows the theme through currentColor */
+  figure { margin: 0; display: flex; flex-direction: column; gap: 11px; }
+  figure svg { width: 100%; height: auto; display: block; color: var(--ink-2); }
+  .figframe {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 5px; padding: 20px 18px; overflow-x: auto;
+  }
+  figcaption { font-size: .93rem; color: var(--muted); max-width: 74ch; }
+  svg text { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+  .n-fill { fill: var(--surface-2); }
+  .n-stroke { stroke: var(--line); }
+  .accent { color: var(--gold); }
+
+  /* the attribute grid's weight bars */
+  .bar { display: flex; align-items: center; gap: 7px; justify-content: flex-end; }
+  .bar i { display: block; height: 7px; border-radius: 2px; background: var(--gold); opacity: .78; }
+  .bar span { font-family: "IBM Plex Mono", monospace; font-size: .76rem; color: var(--muted); min-width: 2.1em; }
+  .bar.none span { opacity: .4; }
+
+  /* the annotated scoreline */
+  .score-demo {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 5px;
+    padding: 24px 22px; display: flex; flex-direction: column; gap: 18px;
+  }
+  .score-line {
+    display: flex; align-items: baseline; justify-content: center; gap: 18px; flex-wrap: wrap;
+    font-family: "Bricolage Grotesque", sans-serif; font-weight: 800;
+  }
+  .score-line .club { font-size: 1.05rem; font-weight: 600; }
+  .score-line .pts { font-size: clamp(2rem, 6vw, 3rem); letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+  .sums { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+  .sum { display: flex; flex-direction: column; gap: 5px; font-family: "IBM Plex Mono", monospace; font-size: .84rem; }
+  .sum .row { display: flex; justify-content: space-between; gap: 12px; color: var(--ink-2); }
+  .sum .row.total { border-top: 1px solid var(--line); padding-top: 5px; color: var(--ink); font-weight: 600; }
+  .sum .who { font-family: "Bricolage Grotesque", sans-serif; font-weight: 700; font-size: .95rem; margin-bottom: 3px; }
+
 `;
 
 export interface LayoutOptions {
@@ -151,6 +237,7 @@ const NAV: [string, string][] = [
   ['/results', 'Results'],
   ['/leaders', 'Leaders'],
   ['/clubs', 'Clubs'],
+  ['/guide', 'How it works'],
 ];
 
 export function page(options: LayoutOptions, body: string): string {
