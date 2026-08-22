@@ -61,6 +61,8 @@ export interface OffseasonResult {
   improved: number;
   declined: number;
   retired: { name: string; age: number; club: string | null }[];
+  /** Players whose contracts ran out and who are now free agents. */
+  walkedAway: { name: string; from: string | null }[];
   intake: number;
   biggestRisers: { name: string; age: number; from: number; to: number }[];
 }
@@ -159,6 +161,7 @@ export async function runOffseason(
     improved: 0,
     declined: 0,
     retired: [],
+    walkedAway: [],
     intake: 0,
     biggestRisers: [],
   };
@@ -228,6 +231,12 @@ export async function runOffseason(
   }
 
   result.biggestRisers = risers.sort((a, b) => b.to - b.from - (a.to - a.from)).slice(0, 5);
+
+  // Deals that ran out: those players walk for nothing, which is the redistribution
+  // the league relies on while there is no draft.
+  const { expireContracts } = await import('./market.js');
+  result.walkedAway = await expireContracts(db, season.number);
+
   result.intake = await runYouthIntake(db, season.number, rules, world, rng);
 
   return result;
@@ -281,6 +290,7 @@ async function runYouthIntake(
         await db.insert(players).values({
           ...fromSimPlayer(prospect, { clubId: club.id, joinedSeason: seasonNumber + 1 }),
           wage: wageForPlayer(prospect, rules),
+          contractUntilSeason: seasonNumber + 1 + 3,
         });
         created += 1;
       }

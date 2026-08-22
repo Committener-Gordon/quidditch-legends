@@ -19,9 +19,12 @@ import {
 import {
   FACILITIES,
   INTENSITY,
+  renewalFee,
+  scoutCost,
   scoutRange,
   stadiumCapacity,
   upgradeCost,
+  wageForPlayer,
   weeklyTrainingCost,
   weeklyUpkeep,
   type FacilityKind,
@@ -30,6 +33,8 @@ import {
 import {
   activeRoster,
   balanceOf,
+  browseMarket,
+  ceilingFor,
   clubById,
   clubNames,
   currentSeason,
@@ -40,8 +45,14 @@ import {
   ledgerFor,
   ledgerSummary,
   lineupFor,
+  listingFor,
+  listingsOf,
   loadTable,
+  playerById,
+  reportFor,
+  reportsFor,
   topDivisionOf,
+  valuationOf,
   toSimPlayer,
   trainingOrderFor,
   upcomingFixtures,
@@ -52,6 +63,7 @@ import {
 } from '@ql/db';
 import { escapeHtml, page, tableHtml, type LayoutOptions } from './layout.js';
 import { liveNow } from './pages.js';
+import { expiringSoon } from '@ql/worker/jobs';
 
 /** How long a matchday takes to play out on screen. */
 const PLAYBACK_CHOICES: [number, string][] = [
@@ -272,6 +284,8 @@ export async function dashboardPage(context: Context, clubId: string): Promise<s
          <a class="card" style="text-decoration:none;color:inherit" href="/my/facilities"><h3>Facilities</h3><p class="note">The only thing worth saving for.</p></a>
          <a class="card" style="text-decoration:none;color:inherit" href="/my/finances"><h3>Finances</h3><p class="note">Every Galleon in and out, with a reason attached.</p></a>
          <a class="card" style="text-decoration:none;color:inherit" href="/my/squad"><h3>Squad</h3><p class="note">Ratings, wages, fitness and what a scout makes of the youngsters.</p></a>
+         <a class="card" style="text-decoration:none;color:inherit" href="/my/contracts"><h3>Contracts</h3><p class="note">Who is running out. Let one lapse and they walk for nothing.</p></a>
+         <a class="card" style="text-decoration:none;color:inherit" href="/market"><h3>Transfer market</h3><p class="note">Listed players and free agents, priced against a valuation.</p></a>
        </div>
      </section>`,
   );
@@ -539,22 +553,34 @@ export async function squadPage(context: Context, clubId: string): Promise<strin
   const levels = await facilityLevels(db, clubId);
   const range = scoutRange(levels.scoutingNetwork);
 
+  const reports = await reportsFor(db, clubId);
+  const listed = new Set((await listingsOf(db, clubId)).map((row) => row.playerId));
+
   const rows = roster.map((row) => {
     const player = toSimPlayer(row);
     const rating = overall(player, rules);
-    const low = Math.max(Math.round(rating), Math.round(row.potential - range / 2));
-    const high = Math.min(99, Math.round(row.potential + range / 2));
+    const ceiling = ceilingFor(row, rating, reports.get(row.id));
+    const value = valuationOf(row, rules);
     return [
       `<span class="tag">${row.position.slice(0, 3)}</span>`,
-      escapeHtml(row.name) + (row.injuredUntil ? ' <span class="tag">injured</span>' : ''),
+      `<a href="/market/${row.id}">${escapeHtml(row.name)}</a>` +
+        (row.injuredUntil ? ' <span class="tag">injured</span>' : ''),
       String(row.age),
       `<strong>${rating.toFixed(0)}</strong>`,
-      row.age <= 24 ? `${low}–${high}` : '—',
+      row.age <= 24 ? `${ceiling.low}–${ceiling.high}` : '—',
       galleons(-row.wage),
-      String(row.form),
+      String(row.contractUntilSeason ?? '—'),
+      value.proceeds.toLocaleString(),
       String(row.stamina),
-      String(row.morale),
-      String(row.xp),
+      listed.has(row.id)
+        ? `<form method="post" action="/my/unlist" class="inline">
+             <input type="hidden" name="playerId" value="${row.id}">
+             <button class="secondary" type="submit">Unlist</button>
+           </form>`
+        : `<form method="post" action="/my/list" class="inline">
+             <input type="hidden" name="playerId" value="${row.id}">
+             <button class="secondary" type="submit">List</button>
+           </form>`,
     ];
   });
 
@@ -569,16 +595,250 @@ export async function squadPage(context: Context, clubId: string): Promise<strin
            { label: 'Rating', num: true },
            { label: 'Ceiling' },
            { label: 'Wage', num: true },
-           { label: 'Form', num: true },
+           { label: 'Until', num: true },
+           { label: 'Sells for', num: true },
            { label: 'Fit', num: true },
-           { label: 'Morale', num: true },
-           { label: 'XP', num: true },
+           { label: '' },
          ],
          rows,
        )}
-       <p class="note">Ceiling is your scouts' estimate, not the number. Your scouting network is level ${levels.scoutingNetwork}, which narrows it to about ${range.toFixed(0)} points; only players 24 and under are worth a report.</p>
+       <p class="note">Ceiling is your scouts' estimate, not the number, and only players 24 and under are worth a report. Your network is level ${levels.scoutingNetwork}, which narrows a paid report to about ${range.toFixed(0)} points either way. &ldquo;Sells for&rdquo; is what the market would pay today &mdash; listing asks other clubs for more.</p>
      </section>`,
   );
 }
 
 export { ATTRIBUTES, POSITION_WEIGHTS };
+
+// --- the market -------------------------------------------------------------
+
+/**
+ * The transfer list.
+ *
+ * Two kinds of player: listed by a club, or a free agent whose contract ran out.
+ * A free agent costs only a signing-on payment, which is what makes letting a
+ * contract lapse a real mistake and everyone else's opportunity.
+ */
+export async function marketPage(
+  context: Context,
+  clubId: string,
+  filter: { position?: string } = {},
+): Promise<string> {
+  const { db } = context;
+  const season = await currentSeason(db);
+  const rules = season ? rulesByVersion(season.rulesVersion) : DEFAULT_RULES;
+  const entries = await browseMarket(db, clubId, rules, filter);
+  const balance = await balanceOf(db, clubId);
+  const levels = await facilityLevels(db, clubId);
+  const cost = scoutCost(levels.scoutingNetwork);
+
+  const positions: Position[] = ['chaser', 'beater', 'keeper', 'seeker'];
+  const tabs = [
+    `<a class="tag${!filter.position ? ' you' : ''}" href="/market">all</a>`,
+    ...positions.map(
+      (position) =>
+        `<a class="tag${filter.position === position ? ' you' : ''}" href="/market?position=${position}">${position}</a>`,
+    ),
+  ].join(' ');
+
+  const rows = entries.map((entry) => {
+    const free = entry.price === null;
+    const affordable = free || balance >= (entry.price ?? 0);
+    return [
+      `<span class="tag">${entry.player.position.slice(0, 3)}</span>`,
+      `<a href="/market/${entry.player.id}">${escapeHtml(entry.player.name)}</a>`,
+      String(entry.player.age),
+      `<strong>${entry.rating.toFixed(0)}</strong>`,
+      entry.player.age <= 24
+        ? `${entry.ceiling.low}&ndash;${entry.ceiling.high}${entry.ceiling.scouted ? '' : ' <span class="tag">unscouted</span>'}`
+        : '&mdash;',
+      galleons(-entry.player.wage),
+      free ? '<span class="tag auto">free agent</span>' : escapeHtml(entry.sellerShort ?? ''),
+      free ? 'signing on' : (entry.price ?? 0).toLocaleString(),
+      `<form method="post" action="/market/buy" class="inline">
+         <input type="hidden" name="playerId" value="${entry.player.id}">
+         <button class="${affordable ? 'primary' : 'secondary'}" type="submit"${affordable ? '' : ' disabled'}>${free ? 'Sign' : 'Buy'}</button>
+       </form>`,
+    ];
+  });
+
+  return page(
+    { ...context.shell, title: 'Transfer market', active: '/market', subtitle: `${balance.toLocaleString()} Galleons available` },
+    `<section>
+       <p>${tabs}</p>
+       <p class="note">Prices are set against a valuation rather than haggled &mdash; buying costs about 12% over the valuation and selling returns 85% of it, so trading the same squad back and forth loses money. A scout report costs ${cost.toLocaleString()} and narrows a ceiling estimate; your network is level ${levels.scoutingNetwork}.</p>
+       ${
+         rows.length > 0
+           ? tableHtml(
+               [
+                 { label: 'Pos' }, { label: 'Player' }, { label: 'Age', num: true },
+                 { label: 'Rating', num: true }, { label: 'Ceiling' }, { label: 'Wage', num: true },
+                 { label: 'From' }, { label: 'Price', num: true }, { label: '' },
+               ],
+               rows,
+             )
+           : '<div class="card"><p class="note">Nothing for sale, and no free agents. Contracts run out in the off-season &mdash; check back then.</p></div>'
+       }
+     </section>`,
+  );
+}
+
+/** One player, with everything a buyer is allowed to know. */
+export async function marketPlayerPage(context: Context, clubId: string, playerId: string): Promise<string | null> {
+  const { db } = context;
+  const season = await currentSeason(db);
+  const rules = season ? rulesByVersion(season.rulesVersion) : DEFAULT_RULES;
+
+  const row = await playerById(db, playerId);
+  if (!row) return null;
+
+  const rating = overall(toSimPlayer(row), rules);
+  const listing = await listingFor(db, playerId);
+  const report = await reportFor(db, clubId, playerId);
+  const ceiling = ceilingFor(row, rating, report ?? undefined);
+  const levels = await facilityLevels(db, clubId);
+  const cost = scoutCost(levels.scoutingNetwork);
+  const mine = row.clubId === clubId;
+  const valuation = valuationOf(row, rules);
+
+  const attribute = (label: string, value: number): string =>
+    `<div><dt>${label}</dt><dd>${value}</dd></div>`;
+
+  return page(
+    { ...context.shell, title: row.name, active: '/market', subtitle: `${row.position} &middot; ${row.age}` },
+    `<section>
+       <dl class="kv">
+         <div><dt>Rating</dt><dd>${rating.toFixed(0)}</dd></div>
+         <div><dt>Ceiling</dt><dd>${row.age <= 24 ? `${ceiling.low}&ndash;${ceiling.high}` : '&mdash;'}</dd></div>
+         <div><dt>Wage / week</dt><dd>${galleons(-row.wage)}</dd></div>
+         <div><dt>Contract until</dt><dd>${row.contractUntilSeason ?? '&mdash;'}</dd></div>
+         <div><dt>Fitness</dt><dd>${row.stamina}</dd></div>
+         <div><dt>Form</dt><dd>${row.form}</dd></div>
+       </dl>
+       <p class="note">${
+         ceiling.scouted
+           ? `Your scouts have watched this player. A report is an estimate, not the number &mdash; and another club's report will differ.`
+           : `Nobody has scouted this player. The range above is a guess from their current level.`
+       }</p>
+     </section>
+     <section>
+       <h2>Attributes</h2>
+       <dl class="kv">
+         ${attribute('Flying', row.flying)}${attribute('Handling', row.handling)}
+         ${attribute('Aim', row.aim)}${attribute('Strength', row.strength)}
+         ${attribute('Vision', row.vision)}${attribute('Reflexes', row.reflexes)}
+         ${attribute('Nerve', row.nerve)}
+       </dl>
+     </section>
+     <section>
+       <h2>What you can do</h2>
+       <div class="grid">
+         ${
+           row.age <= 24
+             ? `<form method="post" action="/market/scout" class="card">
+                  <h3>Scout them</h3>
+                  <p class="note">Narrows the ceiling estimate to about ${scoutRange(levels.scoutingNetwork).toFixed(0)} points either way.</p>
+                  <input type="hidden" name="playerId" value="${playerId}">
+                  <input type="hidden" name="back" value="/market/${playerId}">
+                  <button class="secondary" type="submit">Report for ${cost.toLocaleString()}</button>
+                </form>`
+             : ''
+         }
+         ${
+           mine
+             ? `<form method="post" action="/my/sell" class="card">
+                  <h3>Sell to the market</h3>
+                  <p class="note">You would receive ${valuation.proceeds.toLocaleString()} Galleons. Less than the valuation, on purpose.</p>
+                  <input type="hidden" name="playerId" value="${playerId}">
+                  <button class="secondary" type="submit">Sell</button>
+                </form>
+                <form method="post" action="/my/list" class="card">
+                  <h3>Put on the transfer list</h3>
+                  <p class="note">Other clubs could buy for ${valuation.asking.toLocaleString()}.</p>
+                  <input type="hidden" name="playerId" value="${playerId}">
+                  <button class="secondary" type="submit">List</button>
+                </form>`
+             : listing
+               ? `<form method="post" action="/market/buy" class="card">
+                    <h3>Buy</h3>
+                    <p class="note">The asking price is ${listing.price.toLocaleString()} Galleons.</p>
+                    <input type="hidden" name="playerId" value="${playerId}">
+                    <button class="primary" type="submit">Buy for ${listing.price.toLocaleString()}</button>
+                  </form>`
+               : row.clubId === null
+                 ? `<form method="post" action="/market/buy" class="card">
+                      <h3>Sign as a free agent</h3>
+                      <p class="note">No fee to anyone &mdash; six weeks' wages up front, then the wage bill.</p>
+                      <input type="hidden" name="playerId" value="${playerId}">
+                      <button class="primary" type="submit">Sign</button>
+                    </form>`
+                 : '<div class="card"><p class="note">Their club is not selling.</p></div>'
+         }
+       </div>
+     </section>`,
+  );
+}
+
+/** Contracts running out, and what re-signing would cost. */
+export async function contractsPage(context: Context, clubId: string): Promise<string> {
+  const { db } = context;
+  const season = await currentSeason(db);
+  if (!season) return page({ ...context.shell, title: 'Contracts' }, '<section><div class="card"><p class="note">No season is running.</p></div></section>');
+
+  const rules = rulesByVersion(season.rulesVersion);
+  const expiring = await expiringSoon(db, clubId, season.number);
+  const roster = await rosterOf(db, clubId);
+  const balance = await balanceOf(db, clubId);
+
+  const rowsFor = (list: typeof roster) =>
+    list.map((row) => {
+      const rating = overall(toSimPlayer(row), rules);
+      const wage = wageForPlayer(toSimPlayer(row), rules);
+      const fee = renewalFee(wage);
+      const running = (row.contractUntilSeason ?? 0) <= season.number;
+      return [
+        `<span class="tag">${row.position.slice(0, 3)}</span>`,
+        `<a href="/market/${row.id}">${escapeHtml(row.name)}</a>`,
+        String(row.age),
+        `<strong>${rating.toFixed(0)}</strong>`,
+        String(row.contractUntilSeason ?? '—'),
+        galleons(-row.wage),
+        wage === row.wage ? '&mdash;' : galleons(-wage),
+        running
+          ? `<form method="post" action="/my/renew" class="inline">
+               <input type="hidden" name="playerId" value="${row.id}">
+               <button class="${balance >= fee ? 'primary' : 'secondary'}" type="submit"${balance >= fee ? '' : ' disabled'}>Renew for ${fee.toLocaleString()}</button>
+             </form>`
+          : '<span class="tag">running</span>',
+      ];
+    });
+
+  return page(
+    { ...context.shell, title: 'Contracts', active: '/my', subtitle: `Season ${season.number}` },
+    `<section>
+       <p class="note">A deal that runs out means the player walks for nothing in the off-season, and lands in free agency where any club can have them for six weeks' wages. Renewing re-strikes the wage at what they are <em class="term">now</em> worth &mdash; which is how success gets expensive.</p>
+       ${
+         expiring.length > 0
+           ? tableHtml(
+               [
+                 { label: 'Pos' }, { label: 'Player' }, { label: 'Age', num: true },
+                 { label: 'Rating', num: true }, { label: 'Until', num: true },
+                 { label: 'Wage now', num: true }, { label: 'New wage', num: true }, { label: '' },
+               ],
+               rowsFor(expiring),
+             )
+           : '<div class="card"><p class="note">Nothing running out this season.</p></div>'
+       }
+     </section>
+     <section>
+       <h2>The whole squad</h2>
+       ${tableHtml(
+         [
+           { label: 'Pos' }, { label: 'Player' }, { label: 'Age', num: true },
+           { label: 'Rating', num: true }, { label: 'Until', num: true },
+           { label: 'Wage now', num: true }, { label: 'New wage', num: true }, { label: '' },
+         ],
+         rowsFor(roster),
+       )}
+     </section>`,
+  );
+}

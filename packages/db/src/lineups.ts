@@ -155,9 +155,21 @@ export function buildSquadFromLineup(
   rules: RuleSet,
   bonus: AttributeBonus = {},
 ): SquadBuildResult {
-  const available = roster.filter((row) => isAvailable(row, onDate));
+  let available = roster.filter((row) => isAvailable(row, onDate));
+
+  // An injury crisis must not abort the fixture -- and it certainly must not abort
+  // the other five matches on the same matchday. A club short of bodies plays the
+  // walking wounded, which is what a real club would have to do.
   if (available.length < 7) {
-    throw new Error(`${club.name} cannot field seven players (${available.length} available)`);
+    const wounded = roster
+      .filter((row) => !isAvailable(row, onDate) && row.retiredInSeason === null)
+      .slice(0, 7 - available.length);
+    available = [...available, ...wounded];
+  }
+  if (available.length < 7) {
+    throw new Error(
+      `${club.name} has only ${available.length} players on its books and cannot field a side`,
+    );
   }
 
   const clubTactics = toTactics(club.tactics);

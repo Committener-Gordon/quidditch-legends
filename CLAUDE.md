@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 npm install
 npm run db:migrate      # create/update the schema; only this and the worker may migrate
 npm run typecheck       # all seven packages, plus the test files
-npm run test            # 73 tests
+npm run test            # 86 tests
 
 # a playable world from nothing
 npm run world:new       # 12 AI clubs, 168 players, from a seed
@@ -129,6 +129,15 @@ of 1,537.
   code and says what to run; the worker applies outstanding migrations itself.
 - Root-level `.ts` scripts are treated as CJS (no `"type": "module"` at the root).
   Put throwaway scripts inside a workspace package instead.
+- **Never write through the outer `db` handle inside a `uow.run` block.** One
+  physical connection means a write on `db` while a transaction is open on `tx` does
+  not error — it stops making progress. Use the aggregate or the scoped repositories.
+- **Aggregate loads must stay cheap.** `clubs.get()` is called in loops; it once
+  upserted six facility rows per load and turned a four-second season into a
+  six-minute one.
+- **A new season must start after the previous one ends** (`nextSeasonStart`).
+  Seasons that share calendar dates share injury dates, and a club can arrive at its
+  opening fixture with nine players unavailable.
 
 ## Conventions
 
@@ -140,11 +149,19 @@ of 1,537.
   with a redirect; a live match page auto-updates with `<meta http-equiv="refresh">`.
 - Money is integer Galleons. Nothing is purchasable with real money by design.
 
+### The market
+
+Priced against a valuation, never negotiated. Listings, free agents (from expired
+contracts), paid scout reports with a deliberately imperfect estimate, and contract
+renewals that re-strike the wage. Every write goes through the `Club` aggregate —
+including `expireContracts`, which was first written as a bulk update and could
+strip a squad below the seven it needs to field a side.
+
+`aiMarket` runs each payday: AI clubs renew, list surplus, sign free agents and buy
+from each other, both to fill gaps and to upgrade. Without the upgrade rule nothing
+anybody lists ever sells, because youth intake keeps every club at full shape.
+
 ## Not built yet
 
-No transfer *market* — but the machinery underneath it exists and is tested:
-`executeTransfer` moves a player and the money in one transaction, with a 5% levy
-that leaves the economy. Phase four is the market around it: listings, valuations,
-AI buyers and the screens. See `docs/aggregates.md`.
-
-No promotion/relegation or cup (phase five).
+No bidding between managers, and no youth draft — the catch-up mechanism the league
+still lacks. No promotion/relegation or cup (phase five). See `docs/aggregates.md`.

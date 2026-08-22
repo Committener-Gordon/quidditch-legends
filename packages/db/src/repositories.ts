@@ -19,9 +19,9 @@ import {
   type FacilityKind,
   type Position,
 } from '@ql/domain';
-import { DEFAULT_LEVELS, FACILITIES } from '@ql/economy';
+import { DEFAULT_LEVELS } from '@ql/economy';
 import type { Database } from './client.js';
-import { clubs, facilities, ledgerEntries, players } from './schema.js';
+import { clubs, facilities, ledgerEntries, players, transferListings } from './schema.js';
 
 export interface ClubsRepository {
   get(id: ClubId): Promise<Club>;
@@ -29,8 +29,18 @@ export interface ClubsRepository {
   save(club: Club, seasonId?: string | null): Promise<void>;
 }
 
+/**
+ * Contract length is not part of the money-and-squad invariant, so it does not
+ * belong on the aggregate -- but it does belong in the same transaction as the
+ * signing. This is how it gets there without the aggregate learning what a season
+ * is.
+ */
+export interface ContractsRepository {
+  set(playerId: string, untilSeason: number | null): Promise<void>;
+}
+
 export interface UnitOfWork {
-  run<T>(work: (repositories: { clubs: ClubsRepository }) => Promise<T>): Promise<T>;
+  run<T>(work: (repositories: { clubs: ClubsRepository; contracts: ContractsRepository }) => Promise<T>): Promise<T>;
 }
 
 /** Load a club as the aggregate sees it: a balance, a squad, and some buildings. */
@@ -106,13 +116,24 @@ async function applyChanges(
           .where(and(eq(facilities.clubId, club.id), eq(facilities.kind, change.facility)));
         break;
       case 'released':
-        await db.update(players).set({ clubId: null }).where(eq(players.id, change.playerId));
+        // Leaving a club voids the contract and cancels any listing: both are
+        // facts about being at a club, and a free agent is at none.
+        await db
+          .update(players)
+          .set({ clubId: null, contractUntilSeason: null })
+          .where(eq(players.id, change.playerId));
+        await db.delete(transferListings).where(eq(transferListings.playerId, change.playerId));
+        break;
+      case 'rewage':
+        await db.update(players).set({ wage: change.wage }).where(eq(players.id, change.playerId));
         break;
       case 'signed':
         await db
           .update(players)
           .set({ clubId: club.id, wage: change.wage })
           .where(eq(players.id, change.playerId));
+        // A signed player is no longer for sale by anyone.
+        await db.delete(transferListings).where(eq(transferListings.playerId, change.playerId));
         break;
     }
   }
@@ -121,12 +142,10 @@ async function applyChanges(
 function repositoryFor(db: Database): ClubsRepository {
   return {
     async get(id) {
-      // Facility rows are created lazily, so a club that has never built anything
-      // still loads with every level at zero.
-      await db
-        .insert(facilities)
-        .values(FACILITIES.map((facility) => ({ clubId: id, kind: facility.kind, level: 0, invested: 0 })))
-        .onConflictDoNothing();
+      // A club with no facility rows yet loads with every level at zero, because
+      // `loadSnapshot` starts from the defaults. This used to upsert six rows on
+      // every single load, which made loading a club expensive enough to turn a
+      // four-second season into a six-minute one once the AI started trading.
       return Club.rehydrate(await loadSnapshot(db, id));
     },
     async save(club, seasonId = null) {
@@ -137,10 +156,21 @@ function repositoryFor(db: Database): ClubsRepository {
   };
 }
 
+function contractsFor(db: Database): ContractsRepository {
+  return {
+    async set(playerId, untilSeason) {
+      await db.update(players).set({ contractUntilSeason: untilSeason }).where(eq(players.id, playerId));
+    },
+  };
+}
+
 export function createUnitOfWork(db: Database): UnitOfWork {
   return {
     async run(work) {
-      return db.transaction(async (tx) => work({ clubs: repositoryFor(tx as unknown as Database) }));
+      return db.transaction(async (tx) => {
+        const scoped = tx as unknown as Database;
+        return work({ clubs: repositoryFor(scoped), contracts: contractsFor(scoped) });
+      });
     },
   };
 }

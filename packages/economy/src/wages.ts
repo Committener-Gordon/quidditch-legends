@@ -66,3 +66,46 @@ export function marketValue(rating: number, age: number, potential: number): num
   const upside = 1 + Math.max(0, potential - rating) / 60;
   return Math.round(((wage * 52) / 12) * ageCurve * upside * 3);
 }
+
+/**
+ * What the market charges, and what it pays.
+ *
+ * The spread is the point. Buying costs more than selling returns, so churning
+ * players is a way to lose money rather than print it -- without that, any club
+ * could arbitrage its way to a fortune by trading the same squad back and forth.
+ */
+export const MARKET = {
+  /** A selling club asks above the valuation. */
+  askingPremium: 1.12,
+  /** Selling to the market returns less than the valuation. */
+  saleDiscount: 0.85,
+  /** A renewal costs this many weeks of the new wage up front. */
+  renewalWeeks: 6,
+  /** Seasons a renewal or a signing runs for. */
+  contractSeasons: 3,
+} as const;
+
+export function askingPrice(rating: number, age: number, potential: number): number {
+  return Math.round(marketValue(rating, age, potential) * MARKET.askingPremium);
+}
+
+export function saleProceeds(rating: number, age: number, potential: number): number {
+  return Math.round(marketValue(rating, age, potential) * MARKET.saleDiscount);
+}
+
+export function renewalFee(newWage: number): number {
+  return Math.round(newWage * MARKET.renewalWeeks);
+}
+
+/**
+ * What a scout report costs.
+ *
+ * Cheaper with a better network, so the facility pays for itself twice: the reports
+ * get narrower and each one gets cheaper.
+ */
+export function scoutCost(networkLevel: number): number {
+  return Math.round(3200 * 0.88 ** Math.min(networkLevel, 5));
+}
+
+/** The range a player's ceiling is reported in when nobody has scouted them. */
+export const UNSCOUTED_RANGE = 26;

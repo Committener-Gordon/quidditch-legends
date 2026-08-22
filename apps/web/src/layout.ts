@@ -237,6 +237,7 @@ const NAV: [string, string][] = [
   ['/results', 'Results'],
   ['/leaders', 'Leaders'],
   ['/clubs', 'Clubs'],
+  ['/market', 'Market'],
   ['/guide', 'How it works'],
 ];
 

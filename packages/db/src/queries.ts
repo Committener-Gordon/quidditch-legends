@@ -440,3 +440,8 @@ export async function matchTiming(db: Database, matchId: string) {
     .where(eq(matches.id, matchId));
   return row ?? null;
 }
+
+export async function playerById(db: Database, playerId: string) {
+  const [row] = await db.select().from(players).where(eq(players.id, playerId));
+  return row ?? null;
+}

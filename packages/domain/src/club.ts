@@ -170,6 +170,22 @@ export class Club {
     return ok(member);
   }
 
+  /**
+   * Re-strike a player's wage, on a renewal.
+   *
+   * A wage is squad state, so it belongs here rather than in a stray update from
+   * the application layer -- which is how it was done first, using the outer
+   * database handle from inside a transaction on a single-connection database. That
+   * did not fail loudly; it just stopped making progress.
+   */
+  rewage(playerId: PlayerId, wage: Galleons): Result<Galleons> {
+    const member = this.snapshot.squad.find((entry) => entry.playerId === playerId);
+    if (!member) return refuse('that player is not in this squad');
+    member.wage = wage;
+    this.changes.push({ kind: 'rewage', playerId, wage });
+    return ok(wage);
+  }
+
   // --- persistence hand-off ------------------------------------------------
 
   /** Everything that happened since loading. Clears on read, so saving twice is a no-op. */

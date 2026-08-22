@@ -13,4 +13,8 @@ export { runOffseason, type OffseasonResult } from './offseason.js';
 export { recomputeStandings, computeTable, type TableRow } from './standings.js';
 export { createWorld, SEED_CAPITAL } from './createWorld.js';
 export { executeTransfer, askingPrice, TRANSFER_LEVY, type TransferRequest } from './transfer.js';
+export {
+  listPlayer, unlistPlayer, sellToMarket, buyListed, signFreeAgent,
+  renewContract, expireContracts, expiringSoon, scoutPlayer, aiMarket, seedContracts,
+} from './market.js';
 export { isPayday, weekOf, runPayday, aiSpend, payPrizeMoney, repriceSquads } from './finance.js';

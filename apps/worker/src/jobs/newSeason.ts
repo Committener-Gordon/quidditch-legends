@@ -5,7 +5,7 @@
  * fixture list and, with the same rules version, the same results.
  */
 
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { createRng } from '@ql/sim';
 import {
   clubs,
@@ -48,16 +48,52 @@ export interface NewSeasonResult {
   deadlineMinutes: number;
 }
 
+/**
+ * When the next season should start.
+ *
+ * After the previous one finishes, not "now". Seasons that share calendar dates
+ * share injury dates too: an injury recorded in September of season one is still in
+ * the future for season two if season two also starts in August, and a club can
+ * arrive at its opening fixture with nine players unavailable and no way to field a
+ * side.
+ */
+export async function nextSeasonStart(db: Database, notBefore = new Date()): Promise<Date> {
+  const [latest] = await db
+    .select({ kickoffAt: fixtures.kickoffAt })
+    .from(fixtures)
+    .orderBy(desc(fixtures.kickoffAt))
+    .limit(1);
+  if (!latest) return notBefore;
+
+  // A clear week between seasons, which is also when the off-season runs.
+  const after = new Date(latest.kickoffAt.getTime() + 7 * 86_400_000);
+  return after > notBefore ? after : notBefore;
+}
+
 export async function newSeason(db: Database, options: NewSeasonOptions): Promise<NewSeasonResult> {
   const existing = await db.select({ id: seasons.id }).from(seasons).where(eq(seasons.number, options.number));
   if (existing.length > 0) throw new Error(`season ${options.number} already exists`);
+
+  // Starting a season while one is still being played leaves the unfinished one
+  // orphaned -- every command resolves to the newest season, so the old one can
+  // never be finished or its off-season run.
+  const [running] = await db
+    .select({ number: seasons.number })
+    .from(seasons)
+    .where(eq(seasons.state, 'running'))
+    .limit(1);
+  if (running) {
+    throw new Error(
+      `season ${running.number} is still running -- finish it (npm run season:run) and run its off-season first`,
+    );
+  }
 
   const roster = await db.select({ id: clubs.id, name: clubs.name }).from(clubs).orderBy(clubs.name);
   if (roster.length === 0) throw new Error('no clubs -- run `world:new` first');
 
   const salt = options.salt ?? `season-${options.number}`;
   const rulesVersion = options.rulesVersion ?? 'v1';
-  const startsOn = options.startsOn ?? new Date();
+  const startsOn = options.startsOn ?? (await nextSeasonStart(db));
   const matchdays = matchdayCount(roster.length);
 
   const pace: PaceOptions = options.intervalMinutes ? { intervalMinutes: options.intervalMinutes } : {};

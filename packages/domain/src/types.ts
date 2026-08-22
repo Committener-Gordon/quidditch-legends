@@ -59,7 +59,8 @@ export type ClubChange =
   | { kind: 'credit'; amount: Galleons; reason: string; reference: string | null; ledger: LedgerKind }
   | { kind: 'facility'; facility: FacilityKind; level: number; invested: Galleons }
   | { kind: 'released'; playerId: PlayerId }
-  | { kind: 'signed'; playerId: PlayerId; wage: Galleons };
+  | { kind: 'signed'; playerId: PlayerId; wage: Galleons }
+  | { kind: 'rewage'; playerId: PlayerId; wage: Galleons };
 
 export type LedgerKind =
   | 'gate'

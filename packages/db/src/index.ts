@@ -15,3 +15,4 @@ export * from './lineups.js';
 export * from './auth.js';
 export * from './live.js';
 export * from './repositories.js';
+export * from './market.js';

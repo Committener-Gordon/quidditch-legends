@@ -21,6 +21,7 @@ import {
   fixtureById,
   fixtureOnMatchday,
   isPastDeadline,
+  listingFor,
   nextUnplayedMatchday,
   purchaseFacility,
   registerUser,
@@ -47,10 +48,25 @@ import {
   tablePage,
   type Shell,
 } from './pages.js';
-import { newSeason, runMatchday, runOffseason, settleWorld } from '@ql/worker/jobs';
+import {
+  buyListed,
+  listPlayer,
+  newSeason,
+  renewContract,
+  runMatchday,
+  runOffseason,
+  scoutPlayer,
+  sellToMarket,
+  settleWorld,
+  signFreeAgent,
+  unlistPlayer,
+} from '@ql/worker/jobs';
 import { guidePage } from './guide.js';
 import {
   claimPage,
+  contractsPage,
+  marketPage,
+  marketPlayerPage,
   dashboardPage,
   facilitiesPage,
   financesPage,
@@ -189,7 +205,7 @@ async function get(
   }
 
   // Everything below needs an account.
-  if (path === '/claim' || path.startsWith('/my')) {
+  if (path === '/claim' || path.startsWith('/my') || path.startsWith('/market')) {
     if (!user) return html(response, 401, needsSignIn(shell));
     const context = { db, user, shell };
 
@@ -199,6 +215,20 @@ async function get(
     }
 
     if (!user.clubId) return redirect(response, '/claim');
+
+    if (path === '/market') {
+      const position = url.searchParams.get('position');
+      return html(
+        response,
+        200,
+        await marketPage(context, user.clubId, position ? { position } : {}),
+      );
+    }
+    const marketPlayer = new RegExp(`^/market/(${UUID})$`).exec(path);
+    if (marketPlayer) {
+      const body = await marketPlayerPage(context, user.clubId, marketPlayer[1]!);
+      return html(response, body ? 200 : 404, body ?? notFound(shell));
+    }
 
     switch (path) {
       case '/my':
@@ -213,6 +243,8 @@ async function get(
         return html(response, 200, await financesPage(context, user.clubId));
       case '/my/squad':
         return html(response, 200, await squadPage(context, user.clubId));
+      case '/my/contracts':
+        return html(response, 200, await contractsPage(context, user.clubId));
       case '/my/lineup': {
         const fixtureId = url.searchParams.get('fixture');
         if (!fixtureId) return redirect(response, '/my');
@@ -295,6 +327,68 @@ async function post(
 
   if (path === '/my/play') {
     return postPlay(db, response, form, clubId);
+  }
+
+  if (path === '/market/buy') {
+    // One button for both: a listed player has a price, a free agent has a
+    // signing-on fee. The manager should not have to know which they clicked.
+    const playerId = field(form, 'playerId');
+    const listing = await listingFor(db, playerId);
+    const outcome = listing
+      ? await buyListed(db, clubId, playerId)
+      : await signFreeAgent(db, clubId, playerId);
+    return redirect(
+      response,
+      outcome.ok
+        ? withNotice('/market', listing ? `Signed for ${outcome.value.toLocaleString()} Galleons.` : `Signed on a free transfer for ${outcome.value.toLocaleString()}.`)
+        : withNotice('/market', outcome.reason, 'problem'),
+    );
+  }
+
+  if (path === '/market/scout') {
+    const playerId = field(form, 'playerId');
+    const back = field(form, 'back') || '/market';
+    const outcome = await scoutPlayer(db, clubId, playerId);
+    return redirect(
+      response,
+      outcome.ok
+        ? withNotice(back, `Scouts report a ceiling of ${outcome.value.low}-${outcome.value.high}.`)
+        : withNotice(back, outcome.reason, 'problem'),
+    );
+  }
+
+  if (path === '/my/list' || path === '/my/unlist') {
+    const playerId = field(form, 'playerId');
+    const outcome =
+      path === '/my/list'
+        ? await listPlayer(db, clubId, playerId)
+        : await unlistPlayer(db, clubId, playerId);
+    return redirect(
+      response,
+      outcome.ok
+        ? withNotice('/my/squad', path === '/my/list' ? `Listed at ${Number(outcome.value).toLocaleString()} Galleons.` : 'Taken off the list.')
+        : withNotice('/my/squad', outcome.reason, 'problem'),
+    );
+  }
+
+  if (path === '/my/sell') {
+    const outcome = await sellToMarket(db, clubId, field(form, 'playerId'));
+    return redirect(
+      response,
+      outcome.ok
+        ? withNotice('/my/squad', `Sold for ${outcome.value.toLocaleString()} Galleons.`)
+        : withNotice('/my/squad', outcome.reason, 'problem'),
+    );
+  }
+
+  if (path === '/my/renew') {
+    const outcome = await renewContract(db, clubId, field(form, 'playerId'));
+    return redirect(
+      response,
+      outcome.ok
+        ? withNotice('/my/contracts', `Re-signed to season ${outcome.value.until} at ${outcome.value.wage.toLocaleString()} a week.`)
+        : withNotice('/my/contracts', outcome.reason, 'problem'),
+    );
   }
 
   if (path === '/my/next-season') {
@@ -412,7 +506,6 @@ async function postNextSeason(db: Database, response: ServerResponse): Promise<v
   await runOffseason(db, { seasonNumber: season.number });
   const created = await newSeason(db, {
     number: season.number + 1,
-    startsOn: new Date(),
     rulesVersion: season.rulesVersion,
     pacing: 'manual',
   });

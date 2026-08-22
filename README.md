@@ -151,7 +151,7 @@ twice.
 | `npm run balance -- --n 100000` | Eleven targets, checked by histogram |
 | `npm run matrix` | Archetype round robin: is a squad shape a shortcut? |
 | `npm run tactics` | Tactics round robin: is a setting simply correct? |
-| `npm run test` / `typecheck` | 73 tests |
+| `npm run test` / `typecheck` | 86 tests |
 | **The economy** | |
 | `npm run finances` | Balances, wage bills, upkeep, and the snowball metric |
 | `npm run claim -- --email you@example.com --club ASH` | Hand a club to an account from the CLI |
@@ -376,13 +376,30 @@ intended. Stop that process, or use `npm run db:serve` to share one instance.
    since been injured, that slot is filled with the best available replacement
    rather than forfeiting the match.
 
+## The market
+
+Priced against a valuation rather than negotiated — a deliberate first step, so the
+money supply stays where it was put and there is no collusion to police. The spread
+is what stops a club printing money: buying costs 12% over the valuation and selling
+returns 85% of it, so a round trip loses about a quarter of the fee.
+
+| | |
+| --- | --- |
+| Listed players | Somebody's club will sell them, for a fee. A 5% levy leaves the economy on every deal. |
+| Free agents | Contract ran out. No fee to anyone, just six weeks' wages up front. |
+| Scout reports | Paid, per player, per club. Narrows the reported ceiling — and stays slightly wrong, differently for each club. |
+| Contracts | Every deal has a last season. Let it lapse and the player walks; renew and the wage is re-struck at what they are now worth. |
+
+The eleven AI clubs renew, list, sign free agents and buy from each other every
+payday, so the market moves without you. Over three simulated seasons that produced
+299 transfer entries and 179 levies.
+
 ## What is deliberately not here yet
 
-No transfer *market*, though the machinery is built and tested: `executeTransfer`
-moves a player and the money in a single transaction through the `Club` aggregate,
-with a 5% levy that leaves the economy rather than moving between clubs. What is
-missing is the market around it — listings, valuations, AI buyers, screens. The
-design note is `docs/aggregates.md`. Phase four is the meta-game: an NPC-priced market
+No **bidding** between managers, and no youth **draft** — new players arrive through
+each club's own academy rather than a shared pool picked worst-first, which is the
+catch-up mechanism the league is still missing. Promotion, relegation and a cup are
+phase five. The design note behind the market machinery is `docs/aggregates.md`. Phase four is the meta-game: an NPC-priced market
 first, the off-season draft, scout reports you pay for, and contract renewals —
 then player-to-player bidding once the valuation model has survived a season.
 Phase five is the division pyramid, promotion and relegation, and a cup.

@@ -208,6 +208,9 @@ export async function runMatchday(
       tier: await tierOf(db, divisionId),
     });
     await aiSpend(db, season.id);
+    // The market moves whether or not the manager is looking at it.
+    const { aiMarket } = await import('./market.js');
+    await aiMarket(db, season.number);
   }
 
   // The last matchday closes the season out.

@@ -8,7 +8,7 @@
 
 import { eq } from 'drizzle-orm';
 import { agreeTransfer, type Result, type TransferAgreed, type Position } from '@ql/domain';
-import { marketValue, wageForPlayer } from '@ql/economy';
+import { MARKET, marketValue, wageForPlayer } from '@ql/economy';
 import { overall, rulesByVersion } from '@ql/sim';
 import {
   createUnitOfWork,
@@ -48,7 +48,7 @@ export async function executeTransfer(
   // A move is a new deal, so the wage is re-struck at what the player is worth now.
   const wage = wageForPlayer(toSimPlayer(row), rules);
 
-  return createUnitOfWork(db).run(async ({ clubs }) => {
+  return createUnitOfWork(db).run(async ({ clubs, contracts }) => {
     const [buyer, seller] = await Promise.all([
       clubs.get(request.buyerClubId),
       clubs.get(request.sellerClubId),
@@ -66,6 +66,7 @@ export async function executeTransfer(
     // Seller first: it clears the player's club before the buyer claims them.
     await clubs.save(seller, season?.id ?? null);
     await clubs.save(buyer, season?.id ?? null);
+    await contracts.set(request.playerId, (season?.number ?? 1) + MARKET.contractSeasons);
     return outcome;
   });
 }

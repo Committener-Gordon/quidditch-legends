@@ -156,6 +156,12 @@ export const players = pgTable(
 
     /** Unavailable while this is in the future. */
     injuredUntil: date('injured_until'),
+    /**
+     * Last season of the current deal. Once it passes, the player leaves for free
+     * agency unless renewed -- which is the brake that makes success expensive: a
+     * squad that improves has to be re-signed at what it is now worth.
+     */
+    contractUntilSeason: integer('contract_until_season'),
     retiredInSeason: integer('retired_in_season'),
     joinedSeason: integer('joined_season').notNull().default(1),
   },
@@ -476,6 +482,55 @@ export const lineups = pgTable(
     submittedBy: uuid('submitted_by').references(() => users.id, { onDelete: 'set null' }),
   },
   (table) => [primaryKey({ columns: [table.fixtureId, table.clubId] })],
+);
+
+/**
+ * Players their club will sell, and for how much.
+ *
+ * Free agents are not listed here -- a null `players.club_id` already means
+ * available. This table is only for players somebody owns.
+ */
+export const transferListings = pgTable(
+  'transfer_listings',
+  {
+    playerId: uuid('player_id')
+      .primaryKey()
+      .references(() => players.id, { onDelete: 'cascade' }),
+    clubId: uuid('club_id')
+      .notNull()
+      .references(() => clubs.id, { onDelete: 'cascade' }),
+    /** What the selling club wants. Priced off market value, not negotiated. */
+    price: integer('price').notNull(),
+    listedAt: timestamp('listed_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('listings_club_idx').on(table.clubId)],
+);
+
+/**
+ * What a club's scouts think of a player.
+ *
+ * The estimate is deliberately imperfect and deliberately per-club: two clubs
+ * scouting the same prospect get different numbers, because the alternative is a
+ * market where everyone agrees on every price and there is no judgement left in it.
+ * A better scouting network narrows the range, it does not remove the error.
+ */
+export const scoutReports = pgTable(
+  'scout_reports',
+  {
+    clubId: uuid('club_id')
+      .notNull()
+      .references(() => clubs.id, { onDelete: 'cascade' }),
+    playerId: uuid('player_id')
+      .notNull()
+      .references(() => players.id, { onDelete: 'cascade' }),
+    /** The reported ceiling, as a range. Never the true potential. */
+    low: smallint('low').notNull(),
+    high: smallint('high').notNull(),
+    /** Scouting network level when the report was made. */
+    atLevel: integer('at_level').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.clubId, table.playerId] })],
 );
 
 /** An append-only record of what the world did to itself, for debugging a season. */

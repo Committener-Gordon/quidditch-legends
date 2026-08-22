@@ -634,12 +634,28 @@ const GUIDE = `
 
 <section>
   <div class="sec-head">
+    <p class="eyebrow">The market</p>
+    <h2>Buying, selling and knowing what you are buying</h2>
+  </div>
+  <div class="col stack">
+    <p>Players are priced against a valuation rather than haggled over, and the spread is the point: buying costs about <strong>12% over</strong> the valuation while selling returns <strong>85% of it</strong>. A round trip loses roughly a quarter of the fee, so trading the same squad back and forth is a way to lose money rather than print it.</p>
+    <p>Two kinds of player are available. One whose club has <em class="term">listed</em> them, for a fee. And a <strong>free agent</strong> &mdash; someone whose contract ran out &mdash; who costs no fee at all, just six weeks&rsquo; wages up front. That is what makes an expiring contract matter: the club that let it lapse gets nothing, and everybody else gets a player for almost nothing.</p>
+    <h3>You are told a range, never the number</h3>
+    <p>A young player&rsquo;s ceiling is never shown to you. Unscouted, you see a very wide guess. Pay for a report and it narrows &mdash; by how much depends on your scouting network &mdash; but it stays <em class="term">slightly wrong</em>, and wrong in a different direction for every club. Two managers scouting the same prospect get different numbers. A market where everyone agrees on every price has no judgement left in it.</p>
+    <h3>Contracts are the brake on success</h3>
+    <p>Every deal has a last season. Let one run out and the player walks for nothing in the off-season. Renew and the wage is <strong>re-struck at what they are now worth</strong>, not what they cost &mdash; so a squad that has improved gets more expensive to keep. That is deliberate: it is one of the two things stopping a strong club pulling away permanently.</p>
+    <p class="note">The eleven AI clubs do all of this too &mdash; they renew, list, sign free agents and buy from each other every week. The market moves whether or not you are looking at it.</p>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head">
     <p class="eyebrow">Not built yet</p>
     <h2>What is deliberately missing</h2>
   </div>
   <div class="col stack">
-    <p>Two things you might expect and will not find. <strong>There is no transfer market</strong> &mdash; you develop the players you have, and the only new ones come through your academy. And <strong>there is no promotion or relegation</strong>: one division of twelve, playing each other twice.</p>
-    <p>Both are next. The market comes first, priced against the house rather than other managers, along with scout reports you pay for and contracts that have to be renewed. The division pyramid and a knockout cup come after it.</p>
+    <p>Two things. <strong>There is no bidding</strong> &mdash; prices are set against a valuation rather than negotiated between managers, which keeps the money supply exactly where it was put and gives the valuation model a few seasons to prove itself before anyone is allowed to haggle. And <strong>there is no promotion or relegation</strong>: one division of twelve, playing each other twice.</p>
+    <p>A youth draft is also missing. New players currently arrive through each club&rsquo;s own academy rather than a shared pool picked worst-first, which is the mechanism that would help a struggling club catch up.</p>
   </div>
 </section>
 

@@ -46,7 +46,7 @@ import { toSimPlayer } from '@ql/db';
 import { parseInterval } from './calendar.js';
 import { connect, recordJob } from './db.js';
 import { createWorld } from './jobs/createWorld.js';
-import { newSeason, reschedule } from './jobs/newSeason.js';
+import { newSeason, nextSeasonStart, reschedule } from './jobs/newSeason.js';
 import { runMatchday, runSeason } from './jobs/matchday.js';
 import { runOffseason, countActivePlayers } from './jobs/offseason.js';
 import { recomputeStandings } from './jobs/standings.js';
@@ -256,10 +256,14 @@ async function main(): Promise<void> {
       case 'season:new': {
         const [latest] = await db.select().from(seasons).orderBy(desc(seasons.number)).limit(1);
         const number = args.flags.number ? Number(args.flags.number) : (latest?.number ?? 0) + 1;
-        // Default to starting now. A hardcoded date meant every new world opened
-        // with its first kickoff days away and nothing to do.
+        // Explicit date if given; otherwise pick up after the previous season.
+        // A hardcoded date meant every new world opened with its first kickoff days
+        // away; "now" for every season meant they all shared a calendar, and with it
+        // each other's injury dates.
         const startsOn =
-          args.flags.start && args.flags.start !== 'now' ? new Date(args.flags.start) : new Date();
+          args.flags.start && args.flags.start !== 'now'
+            ? new Date(args.flags.start)
+            : await nextSeasonStart(db);
         const interval = args.flags.interval ? parseInterval(args.flags.interval) : undefined;
         const deadline = args.flags.deadline ? parseInterval(args.flags.deadline) : undefined;
 
@@ -393,7 +397,7 @@ async function main(): Promise<void> {
         for (let index = 0; index < count; index++) {
           const [latest] = await db.select().from(seasons).orderBy(desc(seasons.number)).limit(1);
           const number = (latest?.number ?? 0) + 1;
-          const created = await newSeason(db, { number, startsOn: new Date() });
+          const created = await newSeason(db, { number });
           console.log(heading(`Season ${number}`));
           await runSeason(db, number, {
             onMatchday: (result) => {

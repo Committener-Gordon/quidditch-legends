@@ -112,6 +112,10 @@ export async function createWorld(
     });
   }
 
+  // Staggered contracts, so a squad does not all run out in the same off-season.
+  const { seedContracts } = await import('./market.js');
+  await seedContracts(db, options.season);
+
   return { clubs: DIVISION.length, players: playerCount, seedCapital: SEED_CAPITAL };
 }
 

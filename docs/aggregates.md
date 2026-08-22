@@ -1,6 +1,6 @@
 # A seam for phase four
 
-**Built.** Steps 1 to 4 below are implemented: `packages/domain` holds the `Club`
+**Built, and phase four is built on it.** Steps 1 to 4 below are implemented: `packages/domain` holds the `Club`
 aggregate, `packages/db/src/repositories.ts` is the seam, `purchaseFacility` runs
 through it, and `executeTransfer` exists and is tested. What remains for phase four
 is the market *around* it -- listings, valuations, AI buyers, the screens.
@@ -267,3 +267,17 @@ terms of the inputs rather than the output.
 It also exposed that **test files were never being typechecked** -- they sit outside
 every package's `rootDir`. `tsconfig.tests.json` now covers them, and `npm run
 typecheck` runs it.
+
+Building the market on top of the seam then caught three more, all of the same
+family -- writes that went round the aggregate or round the transaction:
+
+- `expireContracts` was a bulk `UPDATE` that released every player whose deal had
+  run out, with no squad rule applied. It could leave a club unable to field a side.
+  It now releases a club at a time through the aggregate, and puts the players it
+  cannot spare on emergency terms for one more season.
+- `aiMarket` wrote wages through the outer `db` handle from inside a `uow.run`
+  transaction. On a single-connection database that does not error, it just stops
+  making progress -- a four-second season became a six-minute one. A wage is squad
+  state, so it is now `Club.rewage()`.
+- `clubs.get()` upserted six facility rows on every load, which is fine once and
+  ruinous in a loop.
