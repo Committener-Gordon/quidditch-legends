@@ -1,0 +1,1 @@
+ALTER TABLE "seasons" ADD COLUMN "lineup_deadline_minutes" integer DEFAULT 15 NOT NULL;
