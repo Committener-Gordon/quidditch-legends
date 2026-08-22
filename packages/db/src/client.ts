@@ -41,20 +41,65 @@ export interface DbHandle {
 }
 
 /**
- * Has the schema been created yet?
+ * Which migrations are on disk but not in the database.
  *
- * Cheaper and safer than migrating on boot, which is what a read-only process
- * should be doing: ask, and if the answer is no, say what to run.
+ * Checking that one table exists is not enough: a schema can be present and still
+ * be behind the code, and then the app boots happily and dies on the first query
+ * that touches a new column. Comparing the journal against what has actually been
+ * applied catches that at startup instead.
  */
+export async function pendingMigrations(
+  db: Database,
+): Promise<{ applied: number; expected: number; pending: string[] }> {
+  const journalPath = new URL('../drizzle/meta/_journal.json', import.meta.url).pathname;
+  let entries: { tag: string }[] = [];
+  try {
+    entries = (JSON.parse(nodeFs.readFileSync(journalPath, 'utf8')) as { entries?: { tag: string }[] })
+      .entries ?? [];
+  } catch {
+    return { applied: 0, expected: 0, pending: [] };
+  }
+
+  const [table] = await rows<{ ok: boolean }>(
+    db,
+    sql`select exists (
+      select 1 from information_schema.tables
+      where table_schema = 'drizzle' and table_name = '__drizzle_migrations'
+    ) as ok`,
+  );
+  if (table?.ok !== true) {
+    return { applied: 0, expected: entries.length, pending: entries.map((entry) => entry.tag) };
+  }
+
+  const [count] = await rows<{ n: number }>(
+    db,
+    sql`select count(*)::int as n from drizzle.__drizzle_migrations`,
+  );
+  const applied = count?.n ?? 0;
+  return {
+    applied,
+    expected: entries.length,
+    // The journal is ordered, so anything past the applied count is outstanding.
+    pending: entries.slice(applied).map((entry) => entry.tag),
+  };
+}
+
+/** Has the schema been created at all? */
 export async function schemaExists(db: Database): Promise<boolean> {
-  const result = await db.execute<{ ok: boolean }>(
+  const [row] = await rows<{ ok: boolean }>(
+    db,
     sql`select exists (
       select 1 from information_schema.tables
       where table_schema = 'public' and table_name = 'clubs'
     ) as ok`,
   );
-  const rows = (result as unknown as { rows?: { ok: boolean }[] }).rows ?? [];
-  return rows[0]?.ok === true;
+  return row?.ok === true;
+}
+
+/** Both backends return results in slightly different wrappers. */
+async function rows<T>(db: Database, query: Parameters<Database['execute']>[0]): Promise<T[]> {
+  const result = await db.execute(query);
+  return ((result as unknown as { rows?: T[] }).rows ?? (result as unknown as T[])) as T[];
 }
 
 export const DEFAULT_DATA_DIR = '.data/pgdata';

@@ -43,9 +43,10 @@ import {
   type Database,
 } from '@ql/db';
 import { toSimPlayer } from '@ql/db';
+import { parseInterval } from './calendar.js';
 import { connect, recordJob } from './db.js';
 import { createWorld } from './jobs/createWorld.js';
-import { newSeason } from './jobs/newSeason.js';
+import { newSeason, reschedule } from './jobs/newSeason.js';
 import { runMatchday, runSeason } from './jobs/matchday.js';
 import { runOffseason, countActivePlayers } from './jobs/offseason.js';
 import { recomputeStandings } from './jobs/standings.js';
@@ -255,13 +256,55 @@ async function main(): Promise<void> {
       case 'season:new': {
         const [latest] = await db.select().from(seasons).orderBy(desc(seasons.number)).limit(1);
         const number = args.flags.number ? Number(args.flags.number) : (latest?.number ?? 0) + 1;
-        const startsOn = args.flags.start ? new Date(args.flags.start) : new Date('2026-09-01T00:00:00Z');
+        // Default to starting now. A hardcoded date meant every new world opened
+        // with its first kickoff days away and nothing to do.
+        const startsOn =
+          args.flags.start && args.flags.start !== 'now' ? new Date(args.flags.start) : new Date();
+        const interval = args.flags.interval ? parseInterval(args.flags.interval) : undefined;
+        const deadline = args.flags.deadline ? parseInterval(args.flags.deadline) : undefined;
+
         const result = await recordJob(db, 'season:new', String(number), async () => ({
-          ...(await newSeason(db, { number, startsOn, rulesVersion: args.flags.rules ?? 'v1' })),
+          ...(await newSeason(db, {
+            number,
+            startsOn,
+            rulesVersion: args.flags.rules ?? 'v2',
+            ...(interval !== undefined ? { intervalMinutes: interval } : {}),
+            ...(deadline !== undefined ? { deadlineMinutes: deadline } : {}),
+            pacing: args.flags.pacing === 'scheduled' ? 'scheduled' : 'manual',
+          })),
         }));
         console.log(
           `season ${result.number}: ${result.clubs} clubs, ${result.matchdays} matchdays, ` +
-            `${result.fixtures} fixtures, ${String(result.firstKickoff).slice(0, 10)} to ${String(result.lastKickoff).slice(0, 10)}`,
+            `${result.fixtures} fixtures\n` +
+            `  first kickoff ${String(result.firstKickoff).slice(0, 16).replace('T', ' ')} UTC, ` +
+            `last ${String(result.lastKickoff).slice(0, 16).replace('T', ' ')} UTC\n` +
+            (args.flags.pacing === 'scheduled'
+              ? `  scheduled: the scheduler plays each matchday at its kickoff, lineups lock ${result.deadlineMinutes} min before`
+              : '  manual: you start each matchday yourself, and lineups stay open until you do'),
+        );
+        break;
+      }
+
+      case 'reschedule': {
+        // Move the unplayed part of a season onto a faster clock.
+        const season = await resolveSeason(db, args);
+        const interval = parseInterval(args.flags.interval ?? '5m');
+        const from = args.flags.start && args.flags.start !== 'now' ? new Date(args.flags.start) : new Date();
+        const deadline = args.flags.deadline ? parseInterval(args.flags.deadline) : undefined;
+
+        const result = await reschedule(db, {
+          seasonNumber: season.number,
+          from,
+          intervalMinutes: interval,
+          ...(deadline !== undefined ? { deadlineMinutes: deadline } : {}),
+        });
+        console.log(
+          `moved ${result.moved} unplayed fixtures onto a ${interval}-minute clock\n` +
+            `  next kickoff ${result.firstKickoff.slice(0, 16).replace('T', ' ')} UTC, ` +
+            `last ${result.lastKickoff.slice(0, 16).replace('T', ' ')} UTC\n` +
+            (args.flags.pacing === 'scheduled'
+              ? `  scheduled: the scheduler plays each matchday at its kickoff, lineups lock ${result.deadlineMinutes} min before`
+              : '  manual: you start each matchday yourself, and lineups stay open until you do'),
         );
         break;
       }
@@ -350,8 +393,7 @@ async function main(): Promise<void> {
         for (let index = 0; index < count; index++) {
           const [latest] = await db.select().from(seasons).orderBy(desc(seasons.number)).limit(1);
           const number = (latest?.number ?? 0) + 1;
-          const startsOn = new Date(Date.UTC(2026 + number - 1, 8, 1));
-          const created = await newSeason(db, { number, startsOn });
+          const created = await newSeason(db, { number, startsOn: new Date() });
           console.log(heading(`Season ${number}`));
           await runSeason(db, number, {
             onMatchday: (result) => {
@@ -688,7 +730,7 @@ async function main(): Promise<void> {
       default:
         console.error(
           `unknown command: ${args.command}\n` +
-            'try: world:new | season:new | matchday | season:run | offseason | cycle |\n' +
+            'try: world:new | season:new | reschedule | matchday | season:run | offseason | cycle |\n' +
             '     table | clubs | finances | fixtures | leaders | report | seekers |\n' +
             '     claim | reprice | status | world:reset',
         );

@@ -6,9 +6,12 @@ A browser-based Quidditch manager game. Three phases are built:
 - **Phase two — a world with nobody in it.** Postgres, twelve AI-managed clubs, a
   matchday job, an off-season, and read-only league pages. The league runs and
   publishes on its own for a full season.
-- **Phase three — claim a club.** Accounts, taking over an AI club, picking a team
-  against a deadline, and the Galleon economy: wages, gate receipts, facilities and
-  training. A human decision now changes a published result.
+- **Phase three — claim a club.** Accounts, taking over an AI club, picking a team,
+  and the Galleon economy: wages, gate receipts, facilities and training. A human
+  decision now changes a published result.
+
+It is a single-player game at the moment, which means **you own the clock**: claim
+a club, pick your team, and press play when you are ready.
 
 ## The rules this engine plays
 
@@ -42,14 +45,41 @@ npm run report             # re-render the last match from its stored event log
 npm run web                # the league site on http://localhost:3000
 ```
 
-Then open http://localhost:3000, create an account, take over a club, and pick a
-team for your next match. The deadline is fifteen minutes before kickoff.
+Then open http://localhost:3000, create an account, take over a club, pick your
+team, and hit **Play matchday 1**. Every club in the division plays at the same
+time — a league where only your own fixture resolves is not a league. When the
+season runs out of fixtures the dashboard offers to run the off-season and start
+the next one.
+
+Nothing else has to be running. The site plays the matchday itself.
+
+### Who owns the clock
+
+A season is created with one of two pacings, and it changes nothing about the
+fixtures, the engine or the results — only what makes a match start.
+
+| | |
+| --- | --- |
+| `manual` (default) | You press play. Lineups stay open until you do. For one player. |
+| `scheduled` | Kickoff times are real and `npm run serve` plays each matchday when its time arrives. Lineups lock shortly before. For a league full of people. |
+
+```bash
+npm run season:new                                   # manual, starting now
+npm run season:new -- --pacing scheduled             # Tue/Thu/Sat, 20:00 UTC
+npm run season:new -- --pacing scheduled --interval 5m --deadline 1m
+npm run serve                                        # the scheduler, for scheduled seasons
+npm run reschedule -- --interval 10m                 # move an unplayed season onto a faster clock
+```
+
+`--interval` accepts `5m`, `2h`, `1d`. The lineup deadline defaults to a quarter of
+the gap, capped at fifteen minutes — fifteen minutes is right for a two-day gap and
+absurd for a five-minute one.
 
 ### Running the site and the worker at the same time
 
-Phase three needs both: you pick a team on the site, then the worker plays the
-matchday. The embedded database only takes one process at a time, so either stop
-the site before running a worker command, or share one instance:
+Only needed for a `scheduled` season, or if you prefer the CLI. The embedded
+database takes one process at a time, so either stop the site first, or share one
+instance:
 
 ```bash
 npm run db:serve            # terminal 1: embedded database on the wire protocol
@@ -73,6 +103,8 @@ twice.
 | `npm run world:new` | Twelve clubs with rosters and their own tactical habits |
 | `npm run season:new` | A season, its division, its fixture list, a table of zeroes |
 | `npm run matchday` | Play one matchday (defaults to the next unplayed) |
+| `npm run serve` | The scheduler: plays a matchday when its kickoff arrives |
+| `npm run reschedule -- --interval 10m` | Move the unplayed part of a season onto a new clock |
 | `npm run season:run` | Play every remaining matchday |
 | `npm run offseason` | Development, decline, retirement, youth intake |
 | `npm run cycle -- --seasons 3` | Whole seasons back to back |
@@ -88,7 +120,7 @@ twice.
 | `npm run balance -- --n 100000` | Eleven targets, checked by histogram |
 | `npm run matrix` | Archetype round robin: is a squad shape a shortcut? |
 | `npm run tactics` | Tactics round robin: is a setting simply correct? |
-| `npm run test` / `typecheck` | 45 tests |
+| `npm run test` / `typecheck` | 49 tests |
 | **The economy** | |
 | `npm run finances` | Balances, wage bills, upkeep, and the snowball metric |
 | `npm run claim -- --email you@example.com --club ASH` | Hand a club to an account from the CLI |
@@ -294,11 +326,13 @@ intended. Stop that process, or use `npm run db:serve` to share one instance.
    what makes a payday job safe to run twice — there is a test that runs one twice
    and asserts the balance does not move.
 
-6. **The deadline is enforced on the server, once.** The lineup form disables
-   itself past the deadline, but that is a courtesy; the rule lives in the POST
-   handler. A submitted lineup is honoured exactly, out of position or not — if it
-   names a player who has since been injured, that slot is filled with the best
-   available replacement rather than forfeiting the match.
+6. **A lineup closes on the server, once.** The form disables itself, but that is
+   a courtesy; the rule lives in the POST handler. Under `manual` pacing the only
+   thing that closes a lineup is the match having been played — there is no clock to
+   beat. Under `scheduled` pacing the deadline applies. Either way a submitted
+   lineup is honoured exactly, out of position or not: if it names a player who has
+   since been injured, that slot is filled with the best available replacement
+   rather than forfeiting the match.
 
 ## What is deliberately not here yet
 

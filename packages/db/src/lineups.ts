@@ -20,7 +20,7 @@ import {
 } from './mapping.js';
 import { fixtures, lineups } from './schema.js';
 
-/** Minutes before kickoff that a lineup stops being editable. */
+/** Default minutes before kickoff that a lineup stops being editable. */
 export const DEADLINE_MINUTES = 15;
 
 export interface LineupSelection {
@@ -32,12 +32,16 @@ export interface LineupSelection {
 
 export type LineupRow = typeof lineups.$inferSelect;
 
-export function deadlineFor(kickoffAt: Date): Date {
-  return new Date(kickoffAt.getTime() - DEADLINE_MINUTES * 60_000);
+export function deadlineFor(kickoffAt: Date, minutes = DEADLINE_MINUTES): Date {
+  return new Date(kickoffAt.getTime() - minutes * 60_000);
 }
 
-export function isPastDeadline(kickoffAt: Date, now = new Date()): boolean {
-  return now >= deadlineFor(kickoffAt);
+export function isPastDeadline(
+  kickoffAt: Date,
+  now = new Date(),
+  minutes = DEADLINE_MINUTES,
+): boolean {
+  return now >= deadlineFor(kickoffAt, minutes);
 }
 
 export interface ValidationResult {

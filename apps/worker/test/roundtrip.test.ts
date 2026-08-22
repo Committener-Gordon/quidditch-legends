@@ -12,6 +12,7 @@ import {
   matchEvents,
   matches,
   openDatabase,
+  pendingMigrations,
   players,
   replayMatch,
   seasons,
@@ -39,6 +40,17 @@ before(async () => {
 after(async () => {
   await handle.close();
   rmSync(dataDir, { recursive: true, force: true });
+});
+
+describe('migrations', () => {
+  it('reports nothing outstanding once they have all run', async () => {
+    // The check the web app boots on. If this ever reports pending migrations on a
+    // freshly migrated database, every reader refuses to start.
+    const state = await pendingMigrations(db);
+    assert.equal(state.pending.length, 0, `outstanding: ${state.pending.join(', ')}`);
+    assert.equal(state.applied, state.expected);
+    assert.ok(state.expected > 0, 'there should be migrations to apply');
+  });
 });
 
 describe('the matchday job', () => {

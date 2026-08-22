@@ -33,6 +33,16 @@ import {
 export const positionEnum = pgEnum('position', ['chaser', 'beater', 'keeper', 'seeker']);
 export const sideEnum = pgEnum('side', ['home', 'away']);
 export const seasonStateEnum = pgEnum('season_state', ['setup', 'running', 'complete']);
+/**
+ * Who owns the clock.
+ *
+ * `manual` is a single player advancing the world themselves: they press play and
+ * the matchday happens. `scheduled` is a league full of people, where kickoff
+ * times are real and the scheduler plays a matchday when its time arrives. The
+ * fixtures, the engine and the results are identical either way -- the only
+ * difference is what makes a match start.
+ */
+export const seasonPacingEnum = pgEnum('season_pacing', ['manual', 'scheduled']);
 export const ledgerKindEnum = pgEnum('ledger_kind', [
   'gate',
   'appearance',
@@ -159,6 +169,13 @@ export const seasons = pgTable('seasons', {
   state: seasonStateEnum('state').notNull().default('setup'),
   startsOn: date('starts_on').notNull(),
   matchdays: integer('matchdays').notNull(),
+  /**
+   * How long before kickoff a lineup locks. Stored per season because it has to
+   * follow the season's pace: fifteen minutes is right for a two-day gap between
+   * matchdays and absurd for a five-minute one.
+   */
+  lineupDeadlineMinutes: integer('lineup_deadline_minutes').notNull().default(15),
+  pacing: seasonPacingEnum('pacing').notNull().default('manual'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 

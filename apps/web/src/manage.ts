@@ -181,18 +181,33 @@ export async function dashboardPage(context: Context, clubId: string): Promise<s
     (await db.select({ id: clubs.id, name: clubs.name }).from(clubs)).map((row) => [row.id, row.name]),
   );
 
+  const manual = (season?.pacing ?? 'manual') === 'manual';
+
   const nextCards = await Promise.all(
-    next.slice(0, 3).map(async (fixture) => {
+    next.slice(0, 3).map(async (fixture, index) => {
       const home = fixture.homeClubId === clubId;
       const opponent = opponentNames.get(home ? fixture.awayClubId : fixture.homeClubId) ?? '';
       const lineup = await lineupFor(db, fixture.id, clubId);
-      const locked = isPastDeadline(fixture.kickoffAt);
+      // In manual pacing nothing locks until the player presses play, so the only
+      // thing that closes a lineup is the match having been played.
+      const locked = manual
+        ? fixture.status !== 'scheduled'
+        : isPastDeadline(fixture.kickoffAt, new Date(), season?.lineupDeadlineMinutes ?? 15);
+      const isNext = index === 0;
+
       return `<div class="card">
-        <p class="eyebrow">Matchday ${fixture.matchday} &middot; ${home ? 'home' : 'away'}</p>
+        <p class="eyebrow">Matchday ${fixture.matchday} &middot; ${home ? 'home' : 'away'}${isNext ? ' &middot; next' : ''}</p>
         <h3>${escapeHtml(opponent)}</h3>
-        <p class="note">${fixture.kickoffAt.toISOString().slice(0, 16).replace('T', ' ')} UTC</p>
-        <p class="note">${lineup ? 'Team submitted' : 'No team picked &mdash; it will be auto-picked'}</p>
-        ${locked ? '<p class="deadline">Deadline passed</p>' : `<a class="buttonlink" href="/my/lineup?fixture=${fixture.id}">${lineup ? 'Change the team' : 'Pick the team'}</a>`}
+        <p class="note">${lineup ? 'Team submitted' : 'No team picked &mdash; the best available side will be used'}</p>
+        ${locked ? '<p class="deadline">Closed</p>' : `<a class="buttonlink" href="/my/lineup?fixture=${fixture.id}">${lineup ? 'Change the team' : 'Pick the team'}</a>`}
+        ${
+          isNext && manual
+            ? `<form method="post" action="/my/play" style="margin-top:4px">
+                 <input type="hidden" name="matchday" value="${fixture.matchday}">
+                 <button class="primary" type="submit">Play matchday ${fixture.matchday}</button>
+               </form>`
+            : ''
+        }
       </div>`;
     }),
   );
@@ -223,7 +238,12 @@ export async function dashboardPage(context: Context, clubId: string): Promise<s
      </section>
      <section>
        <h2>Next up</h2>
-       ${nextCards.length > 0 ? `<div class="grid">${nextCards.join('')}</div>` : '<div class="card"><p class="note">No fixtures left this season.</p></div>'}
+       ${
+         manual
+           ? '<p class="note">You own the clock. Pick your team, then play the matchday whenever you are ready &mdash; every other club in the division plays at the same time.</p>'
+           : '<p class="note">Matchdays play at their kickoff time. Lineups lock shortly before.</p>'
+       }
+       ${nextCards.length > 0 ? `<div class="grid">${nextCards.join('')}</div>` : `<div class="card"><p class="note">No fixtures left this season.</p>${season?.state === 'complete' ? '<form method="post" action="/my/next-season"><button class="primary" type="submit">Run the off-season and start the next one</button></form>' : ''}</div>`}
      </section>
      <section>
        <h2>Running the club</h2>
@@ -251,7 +271,10 @@ export async function lineupPage(context: Context, clubId: string, fixtureId: st
   const roster = await rosterOf(db, clubId);
   const onDate = fixture.kickoffAt.toISOString().slice(0, 10);
   const existing = await lineupFor(db, fixtureId, clubId);
-  const locked = isPastDeadline(fixture.kickoffAt) || fixture.status !== 'scheduled';
+  const manual = (season?.pacing ?? 'manual') === 'manual';
+  const locked =
+    fixture.status !== 'scheduled' ||
+    (!manual && isPastDeadline(fixture.kickoffAt, new Date(), season?.lineupDeadlineMinutes ?? 15));
 
   const selection = (existing?.starters as LineupSelection | undefined) ?? null;
   const available = roster.filter((row) => !row.injuredUntil || row.injuredUntil <= onDate);
@@ -277,15 +300,17 @@ export async function lineupPage(context: Context, clubId: string, fixtureId: st
 
   const opponentId = fixture.homeClubId === clubId ? fixture.awayClubId : fixture.homeClubId;
   const opponent = await clubOf(db, opponentId);
-  const deadline = deadlineFor(fixture.kickoffAt);
+  const deadline = deadlineFor(fixture.kickoffAt, season?.lineupDeadlineMinutes ?? 15);
 
   return page(
     { ...context.shell, title: `Matchday ${fixture.matchday}`, active: '/my', subtitle: `v ${opponent?.name ?? ''}` },
     `<section>
        <p class="deadline">${
          locked
-           ? 'The deadline has passed. This team is locked.'
-           : `Deadline ${deadline.toISOString().slice(0, 16).replace('T', ' ')} UTC — fifteen minutes before kickoff.`
+           ? 'This match has been played. The team is locked.'
+           : manual
+             ? 'Open until you play this matchday.'
+             : `Deadline ${deadline.toISOString().slice(0, 16).replace('T', ' ')} UTC — ${season?.lineupDeadlineMinutes ?? 15} minutes before kickoff.`
        }</p>
        <p class="note">Anything you leave blank is filled with the best available player. If someone you name is injured by kickoff, that slot is filled the same way rather than costing you the match.</p>
        <form method="post" action="/my/lineup">

@@ -9,7 +9,7 @@
  */
 
 import { createServer } from 'node:http';
-import { openDatabase, schemaExists, type DbHandle } from '@ql/db';
+import { openDatabase, pendingMigrations, schemaExists, type DbHandle } from '@ql/db';
 import { page } from './layout.js';
 import { handle as route } from './router.js';
 
@@ -90,13 +90,28 @@ async function main(): Promise<void> {
   server.listen(PORT, () => {
     openDatabase()
       .then(async (open) => {
-        // A read-only process does not migrate. If the schema is not there, say
-        // what to run rather than creating it from under the worker.
+        // A reader never migrates. But it must refuse to serve a schema that is
+        // behind the code: booting anyway means dying on the first query that
+        // touches a new column, with a stack trace instead of an instruction.
         if (!(await schemaExists(open.db))) {
           console.error(
             'no schema in this database yet.\n' +
               '  npm run db:migrate     create the tables\n' +
               '  npm run world:new      then build a league to look at',
+          );
+          await open.close();
+          process.exit(1);
+        }
+        const migrations = await pendingMigrations(open.db);
+        if (migrations.pending.length > 0) {
+          console.error(
+            `this database is ${migrations.pending.length} migration(s) behind the code ` +
+              `(${migrations.applied} of ${migrations.expected} applied).\n` +
+              `  outstanding: ${migrations.pending.join(', ')}\n\n` +
+              'stop this server first -- the database only takes one process at a time --\n' +
+              'then:\n' +
+              '  npm run db:migrate\n' +
+              '  npm run web',
           );
           await open.close();
           process.exit(1);

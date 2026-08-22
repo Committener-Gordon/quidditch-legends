@@ -8,5 +8,11 @@
     "@ql/db": "*",
     "@ql/sim": "*",
     "@ql/economy": "*"
+  },
+  "exports": {
+    "./jobs": {
+      "types": "./src/jobs/index.ts",
+      "default": "./src/jobs/index.ts"
+    }
   }
 }

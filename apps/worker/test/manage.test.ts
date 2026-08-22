@@ -34,9 +34,10 @@ import {
   type PlayerRow,
 } from '@ql/db';
 import { createWorld } from '../src/jobs/createWorld.js';
-import { newSeason } from '../src/jobs/newSeason.js';
+import { newSeason, reschedule } from '../src/jobs/newSeason.js';
 import { runMatchday } from '../src/jobs/matchday.js';
 import { isPayday, runPayday, weekOf } from '../src/jobs/finance.js';
+import { deadlineMinutesFor, kickoffSchedule, parseInterval } from '../src/calendar.js';
 
 let handle: DbHandle;
 let db: Database;
@@ -352,5 +353,64 @@ describe('a human decision reaches a published result', () => {
       .from(ledgerEntries)
       .where(eq(ledgerEntries.kind, 'gate'));
     assert.ok(entries.length > 0, 'a played match must post gate receipts');
+  });
+});
+
+describe('who owns the clock', () => {
+  it('reads intervals the way a person writes them', () => {
+    assert.equal(parseInterval('5m'), 5);
+    assert.equal(parseInterval('90'), 90);
+    assert.equal(parseInterval('2h'), 120);
+    assert.equal(parseInterval('1d'), 1440);
+    assert.throws(() => parseInterval('soon'));
+  });
+
+  it('spaces a paced season evenly and starts it immediately', () => {
+    const start = new Date('2030-01-01T12:00:00Z');
+    const slots = kickoffSchedule(start, 4, { intervalMinutes: 30 });
+    assert.equal(slots[0]!.toISOString(), start.toISOString(), 'the first kickoff is the start');
+    assert.equal(slots[3]!.toISOString(), '2030-01-01T13:30:00.000Z');
+  });
+
+  it('scales the lineup deadline to the gap between matchdays', () => {
+    // Fifteen minutes before kickoff is right for a two-day gap and absurd for a
+    // five-minute one, where it would have passed before the fixture existed.
+    assert.equal(deadlineMinutesFor({}), 15);
+    assert.equal(deadlineMinutesFor({ intervalMinutes: 5 }), 1);
+    assert.equal(deadlineMinutesFor({ intervalMinutes: 60 }), 15);
+  });
+
+  it('reschedules only the fixtures that have not been played', async () => {
+    const played = await db
+      .select({ id: fixtures.id, kickoffAt: fixtures.kickoffAt })
+      .from(fixtures)
+      .where(and(eq(fixtures.seasonId, seasonId), eq(fixtures.status, 'published')));
+    assert.ok(played.length > 0, 'expected matchday 1 to have been played by an earlier test');
+    const before = new Map(played.map((row) => [row.id, row.kickoffAt.toISOString()]));
+
+    const result = await reschedule(db, {
+      seasonNumber: 1,
+      from: new Date('2030-06-01T09:00:00Z'),
+      intervalMinutes: 10,
+    });
+    assert.ok(result.moved > 0);
+    assert.equal(result.deadlineMinutes, 2);
+
+    // Rewriting the kickoff of a published match would make its result a lie.
+    const after = await db
+      .select({ id: fixtures.id, kickoffAt: fixtures.kickoffAt })
+      .from(fixtures)
+      .where(and(eq(fixtures.seasonId, seasonId), eq(fixtures.status, 'published')));
+    for (const row of after) {
+      assert.equal(row.kickoffAt.toISOString(), before.get(row.id), 'a played fixture must not move');
+    }
+
+    const [next] = await db
+      .select({ kickoffAt: fixtures.kickoffAt })
+      .from(fixtures)
+      .where(and(eq(fixtures.seasonId, seasonId), eq(fixtures.status, 'scheduled')))
+      .orderBy(fixtures.matchday)
+      .limit(1);
+    assert.equal(next!.kickoffAt.toISOString(), '2030-06-01T09:00:00.000Z');
   });
 });

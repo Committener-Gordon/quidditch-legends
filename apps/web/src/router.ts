@@ -34,7 +34,7 @@ import {
   type LineupSelection,
   type SessionUser,
 } from '@ql/db';
-import { and, isNull } from 'drizzle-orm';
+import { and, asc, isNull, or } from 'drizzle-orm';
 import { page } from './layout.js';
 import {
   clubPage,
@@ -45,6 +45,7 @@ import {
   tablePage,
   type Shell,
 } from './pages.js';
+import { newSeason, runMatchday, runOffseason } from '@ql/worker/jobs';
 import {
   claimPage,
   dashboardPage,
@@ -283,6 +284,14 @@ async function post(
     return postLineup(db, response, form, clubId, user);
   }
 
+  if (path === '/my/play') {
+    return postPlay(db, response, form, clubId);
+  }
+
+  if (path === '/my/next-season') {
+    return postNextSeason(db, response);
+  }
+
   if (path === '/my/tactics') {
     const [club] = await db.select({ tactics: clubs.tactics }).from(clubs).where(eq(clubs.id, clubId));
     const current = toTactics(club?.tactics);
@@ -320,6 +329,91 @@ async function post(
   return html(response, 404, notFound(shell));
 }
 
+/**
+ * Play the next matchday, because the player said so.
+ *
+ * This is the single-player clock: there is one manager, so there is nobody to be
+ * unfair to by letting them decide when the round happens. The whole division
+ * plays, not just their fixture -- a league where only your own match resolves is
+ * not a league.
+ */
+async function postPlay(
+  db: Database,
+  response: ServerResponse,
+  form: Map<string, string[]>,
+  clubId: string,
+): Promise<void> {
+  const season = await currentSeason(db);
+  if (!season) return redirect(response, withNotice('/my', 'no season is running', 'problem'));
+  if (season.pacing !== 'manual') {
+    return redirect(
+      response,
+      withNotice('/my', 'this season runs on a schedule, so matchdays play at their kickoff time', 'problem'),
+    );
+  }
+  if (season.state === 'complete') {
+    return redirect(response, withNotice('/my', 'the season is over', 'problem'));
+  }
+
+  const asked = Number(field(form, 'matchday'));
+  const [next] = await db
+    .select({ matchday: fixtures.matchday })
+    .from(fixtures)
+    .where(and(eq(fixtures.seasonId, season.id), eq(fixtures.status, 'scheduled')))
+    .orderBy(asc(fixtures.matchday))
+    .limit(1);
+
+  const matchday = Number.isFinite(asked) && asked > 0 ? asked : next?.matchday;
+  if (!matchday) return redirect(response, withNotice('/my', 'nothing left to play', 'problem'));
+
+  // Only ever the next unplayed one, whatever the form said.
+  if (next && matchday !== next.matchday) {
+    return redirect(response, withNotice('/my', `matchday ${next.matchday} is next`, 'problem'));
+  }
+
+  const result = await runMatchday(db, { seasonNumber: season.number, matchday });
+
+  // Report the player's own fixture, not whichever happened to be first.
+  const [ours] = await db
+    .select({ id: fixtures.id })
+    .from(fixtures)
+    .where(
+      and(
+        eq(fixtures.seasonId, season.id),
+        eq(fixtures.matchday, matchday),
+        or(eq(fixtures.homeClubId, clubId), eq(fixtures.awayClubId, clubId)),
+      ),
+    );
+  const line = result.lines.find((entry) => entry.fixtureId === ours?.id);
+  const summary = line
+    ? `Matchday ${matchday}: ${line.home} ${line.homePoints}-${line.awayPoints} ${line.away}`
+    : `Matchday ${matchday} played.`;
+
+  return redirect(response, withNotice('/my', summary));
+}
+
+/** Wrap the season up and start the next one, once every fixture is played. */
+async function postNextSeason(db: Database, response: ServerResponse): Promise<void> {
+  const season = await currentSeason(db);
+  if (!season) return redirect(response, withNotice('/my', 'no season to finish', 'problem'));
+  if (season.state !== 'complete') {
+    return redirect(response, withNotice('/my', 'there are still fixtures to play', 'problem'));
+  }
+
+  await runOffseason(db, { seasonNumber: season.number });
+  const created = await newSeason(db, {
+    number: season.number + 1,
+    startsOn: new Date(),
+    rulesVersion: season.rulesVersion,
+    pacing: 'manual',
+  });
+
+  return redirect(
+    response,
+    withNotice('/my', `Season ${created.number} is ready. ${created.matchdays} matchdays to play.`),
+  );
+}
+
 async function postLineup(
   db: Database,
   response: ServerResponse,
@@ -334,9 +428,15 @@ async function postLineup(
   if (!fixture || (fixture.homeClubId !== clubId && fixture.awayClubId !== clubId)) {
     return redirect(response, withNotice('/my', 'that is not one of your fixtures', 'problem'));
   }
-  // The deadline is enforced here, once, on the server. The form disables itself
-  // too, but that is a courtesy rather than the rule.
-  if (isPastDeadline(fixture.kickoffAt) || fixture.status !== 'scheduled') {
+  // Enforced here, once, on the server. The form disables itself too, but that is
+  // a courtesy rather than the rule. Under manual pacing the only thing that
+  // closes a lineup is the match having been played -- there is no clock to beat.
+  const season = await currentSeason(db);
+  const manual = (season?.pacing ?? 'manual') === 'manual';
+  if (fixture.status !== 'scheduled') {
+    return redirect(response, withNotice(back, 'that match has already been played', 'problem'));
+  }
+  if (!manual && isPastDeadline(fixture.kickoffAt, new Date(), season?.lineupDeadlineMinutes ?? 15)) {
     return redirect(response, withNotice(back, 'the deadline for that match has passed', 'problem'));
   }
 

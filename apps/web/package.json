@@ -4,5 +4,9 @@
   "private": true,
   "description": "Read-only league pages: table, fixtures, match reports",
   "type": "module",
-  "dependencies": { "@ql/db": "*", "@ql/sim": "*" }
+  "dependencies": {
+    "@ql/db": "*",
+    "@ql/sim": "*",
+    "@ql/worker": "*"
+  }
 }

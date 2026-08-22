@@ -16,7 +16,7 @@ import {
   standings,
   type Database,
 } from '@ql/db';
-import { isoDate, kickoffSchedule } from '../calendar.js';
+import { deadlineMinutesFor, isoDate, kickoffSchedule, type PaceOptions } from '../calendar.js';
 import { doubleRoundRobin, matchdayCount } from '../schedule.js';
 
 export interface NewSeasonOptions {
@@ -25,6 +25,15 @@ export interface NewSeasonOptions {
   rulesVersion?: string;
   startsOn?: Date;
   divisionName?: string;
+  /** Omit for the weekly Tue/Thu/Sat calendar; set to run on a fixed clock. */
+  intervalMinutes?: number;
+  /** Overrides the deadline the pace would imply. */
+  deadlineMinutes?: number;
+  /**
+   * `manual` (the default) means the player starts each matchday themselves.
+   * `scheduled` hands the clock to the scheduler process.
+   */
+  pacing?: 'manual' | 'scheduled';
 }
 
 export interface NewSeasonResult {
@@ -36,6 +45,7 @@ export interface NewSeasonResult {
   fixtures: number;
   firstKickoff: string;
   lastKickoff: string;
+  deadlineMinutes: number;
 }
 
 export async function newSeason(db: Database, options: NewSeasonOptions): Promise<NewSeasonResult> {
@@ -50,6 +60,9 @@ export async function newSeason(db: Database, options: NewSeasonOptions): Promis
   const startsOn = options.startsOn ?? new Date();
   const matchdays = matchdayCount(roster.length);
 
+  const pace: PaceOptions = options.intervalMinutes ? { intervalMinutes: options.intervalMinutes } : {};
+  const deadlineMinutes = options.deadlineMinutes ?? deadlineMinutesFor(pace);
+
   const [season] = await db
     .insert(seasons)
     .values({
@@ -59,6 +72,8 @@ export async function newSeason(db: Database, options: NewSeasonOptions): Promis
       state: 'running',
       startsOn: isoDate(startsOn),
       matchdays,
+      lineupDeadlineMinutes: deadlineMinutes,
+      pacing: options.pacing ?? 'manual',
     })
     .returning({ id: seasons.id });
   if (!season) throw new Error('failed to create the season');
@@ -77,7 +92,7 @@ export async function newSeason(db: Database, options: NewSeasonOptions): Promis
     roster.map((club) => club.id),
     createRng(`${salt}::fixtures`),
   );
-  const kickoffs = kickoffSchedule(startsOn, matchdays);
+  const kickoffs = kickoffSchedule(startsOn, matchdays, pace);
 
   await db.insert(fixtures).values(
     pairs.map((pair) => {
@@ -107,6 +122,7 @@ export async function newSeason(db: Database, options: NewSeasonOptions): Promis
     fixtures: pairs.length,
     firstKickoff: kickoffs[0]!.toISOString(),
     lastKickoff: kickoffs[matchdays - 1]!.toISOString(),
+    deadlineMinutes,
   };
 }
 
@@ -118,4 +134,61 @@ export async function topDivision(db: Database, seasonId: string): Promise<strin
     .where(and(eq(divisions.seasonId, seasonId), eq(divisions.tier, 1)));
   if (!division) throw new Error('season has no top division');
   return division.id;
+}
+
+/**
+ * Move the unplayed part of a season onto a new clock.
+ *
+ * For a world that was created on the default weekly calendar and is now being
+ * played by one person who does not want to wait until Thursday. Played fixtures
+ * are left exactly where they are -- rewriting the kickoff of a published match
+ * would make its result a lie.
+ */
+export async function reschedule(
+  db: Database,
+  options: { seasonNumber: number; from?: Date; intervalMinutes: number; deadlineMinutes?: number },
+): Promise<{ moved: number; firstKickoff: string; lastKickoff: string; deadlineMinutes: number }> {
+  const [season] = await db.select().from(seasons).where(eq(seasons.number, options.seasonNumber));
+  if (!season) throw new Error(`no season ${options.seasonNumber}`);
+
+  const pending = await db
+    .select({ id: fixtures.id, matchday: fixtures.matchday })
+    .from(fixtures)
+    .where(and(eq(fixtures.seasonId, season.id), eq(fixtures.status, 'scheduled')));
+  if (pending.length === 0) {
+    throw new Error(`every fixture in season ${season.number} has already been played`);
+  }
+
+  const matchdays = [...new Set(pending.map((row) => row.matchday))].sort((a, b) => a - b);
+  const from = options.from ?? new Date();
+  const kickoffs = kickoffSchedule(from, matchdays.length, {
+    intervalMinutes: options.intervalMinutes,
+  });
+  const deadlineMinutes =
+    options.deadlineMinutes ?? deadlineMinutesFor({ intervalMinutes: options.intervalMinutes });
+
+  for (const [index, matchday] of matchdays.entries()) {
+    await db
+      .update(fixtures)
+      .set({ kickoffAt: kickoffs[index]! })
+      .where(
+        and(
+          eq(fixtures.seasonId, season.id),
+          eq(fixtures.matchday, matchday),
+          eq(fixtures.status, 'scheduled'),
+        ),
+      );
+  }
+
+  await db
+    .update(seasons)
+    .set({ lineupDeadlineMinutes: deadlineMinutes })
+    .where(eq(seasons.id, season.id));
+
+  return {
+    moved: pending.length,
+    firstKickoff: kickoffs[0]!.toISOString(),
+    lastKickoff: kickoffs[kickoffs.length - 1]!.toISOString(),
+    deadlineMinutes,
+  };
 }

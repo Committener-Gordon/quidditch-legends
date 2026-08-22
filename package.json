@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "description": "Browser-based Quidditch manager game",
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "apps/*"
   ],
   "scripts": {
     "match": "tsx packages/harness/src/cli.ts match",
@@ -34,7 +35,9 @@
     "claim": "tsx apps/worker/src/cli.ts claim",
     "reprice": "tsx apps/worker/src/cli.ts reprice",
     "web:shared": "PG_POOL_MAX=1 PG_POOL_IDLE_MS=250 DATABASE_URL=postgres://postgres@127.0.0.1:5432/postgres tsx apps/web/src/server.ts",
-    "worker:shared": "PG_POOL_MAX=1 PG_POOL_IDLE_MS=250 DATABASE_URL=postgres://postgres@127.0.0.1:5432/postgres tsx apps/worker/src/cli.ts"
+    "worker:shared": "PG_POOL_MAX=1 PG_POOL_IDLE_MS=250 DATABASE_URL=postgres://postgres@127.0.0.1:5432/postgres tsx apps/worker/src/cli.ts",
+    "serve": "tsx apps/worker/src/serve.ts",
+    "reschedule": "tsx apps/worker/src/cli.ts reschedule"
   },
   "devDependencies": {
     "@electric-sql/pglite-socket": "^0.2.8",

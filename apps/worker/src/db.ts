@@ -2,16 +2,22 @@
  * Opening the database for a job run, and a place to record that the run happened.
  */
 import { eq } from 'drizzle-orm';
-import { openDatabase, schemaExists, jobRuns, type Database, type DbHandle } from '@ql/db';
+import { openDatabase, pendingMigrations, jobRuns, type Database, type DbHandle } from '@ql/db';
 
 /**
- * The worker owns the schema, so it may create it -- but only when it is actually
- * missing. Attempting a migration on every read command is a write the embedded
- * database does not need to take.
+ * The worker owns the schema, so it brings it up to date -- but only when
+ * something is actually outstanding. Attempting a migration on every read command
+ * is a write the embedded database does not need to take.
  */
 export async function connect(): Promise<DbHandle> {
   const handle = await openDatabase();
-  if (!(await schemaExists(handle.db))) await handle.migrate();
+  const state = await pendingMigrations(handle.db);
+  if (state.pending.length > 0) {
+    console.log(
+      `applying ${state.pending.length} migration(s): ${state.pending.join(', ')}`,
+    );
+    await handle.migrate();
+  }
   return handle;
 }
 
