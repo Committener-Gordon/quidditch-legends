@@ -1,0 +1,13 @@
+{
+  // Test files sit outside every package's `rootDir`, so they were never being
+  // typechecked -- which let a wrong argument count and a missing `.value` through
+  // in the same session. This checks them without emitting anything.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "declaration": false,
+    "types": ["node"]
+  },
+  "include": ["packages/*/test/**/*.ts", "apps/*/test/**/*.ts"]
+}

@@ -43,6 +43,13 @@
       "when": 1787388142043,
       "tag": "0005_needy_cerise",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1787392769052,
+      "tag": "0006_odd_bushwacker",
+      "breakpoints": true
     }
   ]
 }

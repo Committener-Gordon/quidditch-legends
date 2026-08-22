@@ -13,6 +13,7 @@
   "dependencies": {
     "@ql/sim": "*",
     "drizzle-orm": "^0.45.2",
-    "@ql/economy": "*"
+    "@ql/economy": "*",
+    "@ql/domain": "*"
   }
 }

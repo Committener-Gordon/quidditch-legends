@@ -8,23 +8,25 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { eq } from 'drizzle-orm';
 import { rulesByVersion, type Attribute, type Tactics } from '@ql/sim';
 import type { FacilityKind, TrainingIntensity } from '@ql/economy';
 import {
+  activeRoster,
   authenticate,
   claimClub,
-  clubs,
+  clubById,
   createSession,
   currentSeason,
   destroySession,
-  fixtures,
+  fixtureById,
+  fixtureOnMatchday,
   isPastDeadline,
-  seasons,
-  players,
+  nextUnplayedMatchday,
   purchaseFacility,
   registerUser,
   saveLineup,
+  saveTactics,
+  setPlaybackSeconds,
   sessionUser,
   setTrainingOrder,
   toTactics,
@@ -35,7 +37,6 @@ import {
   type LineupSelection,
   type SessionUser,
 } from '@ql/db';
-import { and, asc, isNull, or } from 'drizzle-orm';
 import { page } from './layout.js';
 import {
   clubPage,
@@ -301,7 +302,7 @@ async function post(
   }
 
   if (path === '/my/tactics') {
-    const [club] = await db.select({ tactics: clubs.tactics }).from(clubs).where(eq(clubs.id, clubId));
+    const club = await clubById(db, clubId);
     const current = toTactics(club?.tactics);
     const next: Tactics = {
       aggression: pick(field(form, 'aggression'), ['defensive', 'balanced', 'attacking'], current.aggression),
@@ -309,7 +310,7 @@ async function post(
       beaterFocus: pick(field(form, 'beaterFocus'), ['seeker', 'chasers', 'protect'], current.beaterFocus),
       chaseTheGame: field(form, 'chaseTheGame') !== 'no',
     };
-    await db.update(clubs).set({ tactics: next }).where(eq(clubs.id, clubId));
+    await saveTactics(db, clubId, next);
     return redirect(response, withNotice('/my/tactics', 'Tactics saved.'));
   }
 
@@ -364,19 +365,14 @@ async function postPlay(
   }
 
   const asked = Number(field(form, 'matchday'));
-  const [next] = await db
-    .select({ matchday: fixtures.matchday })
-    .from(fixtures)
-    .where(and(eq(fixtures.seasonId, season.id), eq(fixtures.status, 'scheduled')))
-    .orderBy(asc(fixtures.matchday))
-    .limit(1);
+  const next = await nextUnplayedMatchday(db, season.id);
 
-  const matchday = Number.isFinite(asked) && asked > 0 ? asked : next?.matchday;
+  const matchday = Number.isFinite(asked) && asked > 0 ? asked : next;
   if (!matchday) return redirect(response, withNotice('/my', 'nothing left to play', 'problem'));
 
   // Only ever the next unplayed one, whatever the form said.
-  if (next && matchday !== next.matchday) {
-    return redirect(response, withNotice('/my', `matchday ${next.matchday} is next`, 'problem'));
+  if (next !== null && matchday !== next) {
+    return redirect(response, withNotice('/my', `matchday ${next} is next`, 'problem'));
   }
 
   // How long the matches should take to play out on screen. Remembered on the
@@ -386,22 +382,13 @@ async function postPlay(
     ? Math.min(3600, Number(asked_seconds))
     : season.playbackSeconds;
   if (playbackSeconds !== season.playbackSeconds) {
-    await db.update(seasons).set({ playbackSeconds }).where(eq(seasons.id, season.id));
+    await setPlaybackSeconds(db, season.id, playbackSeconds);
   }
 
   const result = await runMatchday(db, { seasonNumber: season.number, matchday, playbackSeconds });
 
   // Report the player's own fixture, not whichever happened to be first.
-  const [ours] = await db
-    .select({ id: fixtures.id })
-    .from(fixtures)
-    .where(
-      and(
-        eq(fixtures.seasonId, season.id),
-        eq(fixtures.matchday, matchday),
-        or(eq(fixtures.homeClubId, clubId), eq(fixtures.awayClubId, clubId)),
-      ),
-    );
+  const ours = await fixtureOnMatchday(db, season.id, matchday, clubId);
   const line = result.lines.find((entry) => entry.fixtureId === ours?.id);
 
   // Straight to the feed if there is something to watch; otherwise the score.
@@ -444,7 +431,7 @@ async function postLineup(
   user: SessionUser,
 ): Promise<void> {
   const fixtureId = field(form, 'fixtureId');
-  const [fixture] = await db.select().from(fixtures).where(eq(fixtures.id, fixtureId));
+  const fixture = await fixtureById(db, fixtureId);
   const back = `/my/lineup?fixture=${fixtureId}`;
 
   if (!fixture || (fixture.homeClubId !== clubId && fixture.awayClubId !== clubId)) {
@@ -469,10 +456,7 @@ async function postLineup(
     beaters: [field(form, 'beater1'), field(form, 'beater2')].filter(Boolean),
   };
 
-  const roster = await db
-    .select()
-    .from(players)
-    .where(and(eq(players.clubId, clubId), isNull(players.retiredInSeason)));
+  const roster = await activeRoster(db, clubId);
 
   const onDate = fixture.kickoffAt.toISOString().slice(0, 10);
   const check = validateSelection(selection, roster, onDate);

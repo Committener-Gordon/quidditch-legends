@@ -6,7 +6,6 @@
  * that a determined visitor could ignore anyway.
  */
 
-import { and, asc, desc, eq, isNull } from 'drizzle-orm';
 import {
   DEFAULT_RULES,
   POSITION_WEIGHTS,
@@ -29,21 +28,23 @@ import {
   type TrainingIntensity,
 } from '@ql/economy';
 import {
+  activeRoster,
   balanceOf,
-  clubs,
+  clubById,
+  clubNames,
   currentSeason,
   deadlineFor,
   facilityLevels,
-  fixtures,
+  fixtureById,
   isPastDeadline,
   ledgerFor,
   ledgerSummary,
   lineupFor,
   loadTable,
-  players,
   topDivisionOf,
   toSimPlayer,
   trainingOrderFor,
+  upcomingFixtures,
   type Database,
   type LineupSelection,
   type PlayerRow,
@@ -81,18 +82,8 @@ interface Context {
   shell: Omit<LayoutOptions, 'title'>;
 }
 
-async function clubOf(db: Database, clubId: string) {
-  const [club] = await db.select().from(clubs).where(eq(clubs.id, clubId));
-  return club ?? null;
-}
-
-async function rosterOf(db: Database, clubId: string): Promise<PlayerRow[]> {
-  return db
-    .select()
-    .from(players)
-    .where(and(eq(players.clubId, clubId), isNull(players.retiredInSeason)))
-    .orderBy(asc(players.position), desc(players.age));
-}
+const clubOf = clubById;
+const rosterOf = activeRoster;
 
 // --- sign in and register ---------------------------------------------------
 
@@ -176,19 +167,9 @@ export async function dashboardPage(context: Context, clubId: string): Promise<s
   const order = season ? await trainingOrderFor(db, clubId, season.id) : null;
   const training = order ? weeklyTrainingCost({ focus: null, intensity: order.intensity }, roster.length) : 0;
 
-  const next = season
-    ? (
-        await db
-          .select()
-          .from(fixtures)
-          .where(and(eq(fixtures.seasonId, season.id), eq(fixtures.status, 'scheduled')))
-          .orderBy(asc(fixtures.matchday))
-      ).filter((row) => row.homeClubId === clubId || row.awayClubId === clubId)
-    : [];
-
-  const opponentNames = new Map(
-    (await db.select({ id: clubs.id, name: clubs.name }).from(clubs)).map((row) => [row.id, row.name]),
-  );
+  const next = season ? await upcomingFixtures(db, season.id, clubId) : [];
+  const names = await clubNames(db);
+  const opponentNames = new Map([...names].map(([id, club]) => [id, club.name]));
 
   const manual = (season?.pacing ?? 'manual') === 'manual';
 
@@ -300,7 +281,7 @@ export async function dashboardPage(context: Context, clubId: string): Promise<s
 
 export async function lineupPage(context: Context, clubId: string, fixtureId: string): Promise<string | null> {
   const { db } = context;
-  const [fixture] = await db.select().from(fixtures).where(eq(fixtures.id, fixtureId));
+  const fixture = await fixtureById(db, fixtureId);
   if (!fixture) return null;
   if (fixture.homeClubId !== clubId && fixture.awayClubId !== clubId) return null;
 

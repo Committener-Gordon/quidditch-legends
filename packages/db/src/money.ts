@@ -10,11 +10,13 @@ import { and, desc, eq, sql } from 'drizzle-orm';
 import {
   DEFAULT_LEVELS,
   FACILITIES,
+  FACILITY_BY_KIND,
   investedAt,
   upgradeCost,
   weeklyUpkeep,
   type FacilityKind,
 } from '@ql/economy';
+import { createUnitOfWork } from './repositories.js';
 import type { Database } from './client.js';
 import { facilities, ledgerEntries, players, trainingOrders } from './schema.js';
 
@@ -131,8 +133,10 @@ export type UpgradeOutcome =
 /**
  * Buy one level of one facility.
  *
- * Charge and increment in a single transaction, and re-read the balance inside it,
- * so two clicks cannot buy the same level twice or take a club below zero.
+ * Now the thinnest possible wrapper: load the club, ask it to buy, save it. The
+ * balance check, the refusal message and the level increment all live on the
+ * aggregate, which is why this can no longer take a club below zero however it is
+ * called. The signature is unchanged, so nothing above had to move.
  */
 export async function purchaseFacility(
   db: Database,
@@ -140,43 +144,17 @@ export async function purchaseFacility(
   kind: FacilityKind,
   seasonId: string | null,
 ): Promise<UpgradeOutcome> {
-  await ensureFacilities(db, clubId);
-
-  return db.transaction(async (tx) => {
-    const scoped = tx as unknown as Database;
-    const [row] = await scoped
-      .select()
-      .from(facilities)
-      .where(and(eq(facilities.clubId, clubId), eq(facilities.kind, kind)));
-    if (!row) return { ok: false, reason: 'that facility does not exist' };
-
-    const cost = upgradeCost(kind, row.level);
+  return createUnitOfWork(db).run(async ({ clubs }) => {
+    const club = await clubs.get(clubId);
+    const level = club.facilityLevel(kind);
+    const cost = upgradeCost(kind, level);
     if (cost === 0) return { ok: false, reason: 'already at the highest level' };
 
-    const balance = await balanceOf(scoped, clubId);
-    if (balance < cost) {
-      return {
-        ok: false,
-        reason: `that costs ${cost.toLocaleString()} Galleons and the club has ${balance.toLocaleString()}`,
-      };
-    }
+    const bought = club.buyFacility(kind, cost, FACILITY_BY_KIND[kind].maxLevel, investedAt(kind, level + 1));
+    if (!bought.ok) return { ok: false, reason: bought.reason };
 
-    const level = row.level + 1;
-    await scoped
-      .update(facilities)
-      .set({ level, invested: investedAt(kind, level), updatedAt: new Date() })
-      .where(and(eq(facilities.clubId, clubId), eq(facilities.kind, kind)));
-
-    await postEntry(scoped, {
-      clubId,
-      kind: 'facility',
-      amount: -cost,
-      reason: `${kind} to level ${level}`,
-      reference: `${kind}-${level}`,
-      seasonId,
-    });
-
-    return { ok: true, kind, level, cost, balance: balance - cost };
+    await clubs.save(club, seasonId);
+    return { ok: true, kind, level: bought.value, cost, balance: club.balance };
   });
 }
 

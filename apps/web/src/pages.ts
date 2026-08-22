@@ -3,26 +3,25 @@
  * nothing here simulates, schedules or writes.
  */
 
-import { and, desc, eq, isNull } from 'drizzle-orm';
 import type { MatchEvent, Side } from '@ql/sim';
 import {
-  clubs,
+  clubById,
+  clubNames,
   currentSeason,
   liveMatches,
-  playbackOf,
-  revealedEvents,
-  scoreSoFar,
-  fixtures,
   loadAllClubs,
   loadClub,
   loadFixtures,
   loadLeaders,
   loadMatchResult,
   loadTable,
-  matches,
-  players,
-  topDivisionOf,
+  matchTiming,
+  playbackOf,
+  recentMatchesFor,
+  revealedEvents,
+  scoreSoFar,
   toSimPlayer,
+  topDivisionOf,
   type Database,
 } from '@ql/db';
 import { DEFAULT_RULES, baseRating, rulesByVersion } from '@ql/sim';
@@ -337,15 +336,7 @@ export async function matchPage(db: Database, matchId: string, shell: Shell = {}
     return null;
   }
 
-  const [row] = await db
-    .select({
-      kickedOffAt: matches.kickedOffAt,
-      playbackSeconds: matches.playbackSeconds,
-      minutes: matches.minutes,
-      publishedAt: matches.publishedAt,
-    })
-    .from(matches)
-    .where(eq(matches.id, matchId));
+  const row = await matchTiming(db, matchId);
   if (!row) return null;
 
   const rules = (() => {
@@ -469,9 +460,7 @@ function formatRemaining(seconds: number): string {
 /** Anything currently being revealed, for the table page and the dashboard. */
 export async function liveNow(db: Database, seasonId: string) {
   const rows = await liveMatches(db, seasonId);
-  const names = new Map(
-    (await db.select({ id: clubs.id, name: clubs.name, short: clubs.short }).from(clubs)).map((c) => [c.id, c]),
-  );
+  const names = await clubNames(db);
   return rows.map((row) => ({
     ...row,
     playback: playbackOf(row),
@@ -529,15 +518,13 @@ export async function clubsPage(db: Database, shell: Shell = {}): Promise<string
 
   const cards = await Promise.all(
     list.map(async (club) => {
-      const [row] = await db
-        .select({ tactics: clubs.tactics, capacity: clubs.stadiumCapacity })
-        .from(clubs)
-        .where(eq(clubs.id, club.id));
+      const row = await clubById(db, club.id);
       const tactics = (row?.tactics ?? {}) as Record<string, string>;
+      const capacity = row?.stadiumCapacity ?? 0;
       return `<a class="card" style="text-decoration:none;color:inherit" href="/club/${club.id}">
         <h3>${escapeHtml(club.name)}</h3>
         <p class="note">${escapeHtml(tactics.aggression ?? '?')} &middot; seeker ${escapeHtml(tactics.seekerCommitment ?? '?')} &middot; beaters on ${escapeHtml(tactics.beaterFocus ?? '?')}</p>
-        <p class="note">${(row?.capacity ?? 0).toLocaleString()} seats</p>
+        <p class="note">${capacity.toLocaleString()} seats</p>
       </a>`;
     }),
   );
@@ -557,23 +544,7 @@ export async function clubPage(db: Database, clubId: string, shell: Shell = {}):
   const rules = season ? rulesByVersion(season.rulesVersion) : DEFAULT_RULES;
   const tactics = (club.tactics ?? {}) as Record<string, string>;
 
-  const recent = season
-    ? (
-        await db
-          .select({
-            id: matches.id,
-            homeClubId: fixtures.homeClubId,
-            awayClubId: fixtures.awayClubId,
-            homePoints: matches.homePoints,
-            awayPoints: matches.awayPoints,
-            matchday: fixtures.matchday,
-          })
-          .from(matches)
-          .innerJoin(fixtures, eq(matches.fixtureId, fixtures.id))
-          .where(eq(fixtures.seasonId, season.id))
-          .orderBy(desc(fixtures.matchday))
-      ).filter((row) => row.homeClubId === clubId || row.awayClubId === clubId).slice(0, 8)
-    : [];
+  const recent = season ? await recentMatchesFor(db, season.id, clubId) : [];
 
   const names = new Map((await loadAllClubs(db)).map((entry) => [entry.id, entry.short]));
 
@@ -611,7 +582,7 @@ export async function clubPage(db: Database, clubId: string, shell: Shell = {}):
   );
 
   const results = recent
-    .map((row) => {
+    .map((row: (typeof recent)[number]) => {
       const home = row.homeClubId === clubId;
       const own = home ? row.homePoints : row.awayPoints;
       const other = home ? row.awayPoints : row.homePoints;
@@ -640,13 +611,4 @@ export async function clubPage(db: Database, clubId: string, shell: Shell = {}):
        <p class="note">Potential is deliberately not shown. A manager only ever sees a scout's estimate of it.</p>
      </section>`,
   );
-}
-
-/** Retired players are kept, so the squad query has to exclude them. */
-export async function activeSquadSize(db: Database, clubId: string): Promise<number> {
-  const rows = await db
-    .select({ id: players.id })
-    .from(players)
-    .where(and(eq(players.clubId, clubId), isNull(players.retiredInSeason)));
-  return rows.length;
 }

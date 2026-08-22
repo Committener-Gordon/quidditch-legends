@@ -7,7 +7,7 @@
  * timeline both run off this, from rows.
  */
 
-import { and, asc, desc, eq, isNotNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, isNotNull, isNull, sql } from 'drizzle-orm';
 import { rulesByVersion, simulate } from '@ql/sim';
 import type { MatchEvent, MatchResult, PlayerStatLine, Position, Side, Squad } from '@ql/sim';
 import type { Database } from './client.js';
@@ -346,4 +346,97 @@ export async function replayMatch(db: Database, matchId: string): Promise<MatchR
     { home: squads.home, away: squads.away, seed: row.seed },
     { rules: rulesByVersion(row.rulesVersion) },
   );
+}
+
+// --- the reads the site needs, so it never has to hold a query builder --------
+
+export async function clubById(db: Database, clubId: string) {
+  const [club] = await db.select().from(clubs).where(eq(clubs.id, clubId));
+  return club ?? null;
+}
+
+export async function fixtureById(db: Database, fixtureId: string) {
+  const [fixture] = await db.select().from(fixtures).where(eq(fixtures.id, fixtureId));
+  return fixture ?? null;
+}
+
+export async function clubNames(db: Database): Promise<Map<string, { id: string; name: string; short: string }>> {
+  const rows = await db.select({ id: clubs.id, name: clubs.name, short: clubs.short }).from(clubs);
+  return new Map(rows.map((row) => [row.id, row]));
+}
+
+export async function activeRoster(db: Database, clubId: string) {
+  return db
+    .select()
+    .from(players)
+    .where(and(eq(players.clubId, clubId), isNull(players.retiredInSeason)))
+    .orderBy(asc(players.position), desc(players.age));
+}
+
+/** Fixtures a club has left to play, soonest first. */
+export async function upcomingFixtures(db: Database, seasonId: string, clubId: string) {
+  const rows = await db
+    .select()
+    .from(fixtures)
+    .where(and(eq(fixtures.seasonId, seasonId), eq(fixtures.status, 'scheduled')))
+    .orderBy(asc(fixtures.matchday));
+  return rows.filter((row) => row.homeClubId === clubId || row.awayClubId === clubId);
+}
+
+/** The next matchday nobody has played yet. */
+export async function nextUnplayedMatchday(db: Database, seasonId: string): Promise<number | null> {
+  const [row] = await db
+    .select({ matchday: fixtures.matchday })
+    .from(fixtures)
+    .where(and(eq(fixtures.seasonId, seasonId), eq(fixtures.status, 'scheduled')))
+    .orderBy(asc(fixtures.matchday))
+    .limit(1);
+  return row?.matchday ?? null;
+}
+
+export async function fixtureOnMatchday(db: Database, seasonId: string, matchday: number, clubId: string) {
+  const rows = await db
+    .select()
+    .from(fixtures)
+    .where(and(eq(fixtures.seasonId, seasonId), eq(fixtures.matchday, matchday)));
+  return rows.find((row) => row.homeClubId === clubId || row.awayClubId === clubId) ?? null;
+}
+
+export async function recentMatchesFor(db: Database, seasonId: string, clubId: string, limit = 8) {
+  const rows = await db
+    .select({
+      id: matches.id,
+      homeClubId: fixtures.homeClubId,
+      awayClubId: fixtures.awayClubId,
+      homePoints: matches.homePoints,
+      awayPoints: matches.awayPoints,
+      matchday: fixtures.matchday,
+      status: fixtures.status,
+    })
+    .from(matches)
+    .innerJoin(fixtures, eq(matches.fixtureId, fixtures.id))
+    .where(and(eq(fixtures.seasonId, seasonId), eq(fixtures.status, 'published')))
+    .orderBy(desc(fixtures.matchday));
+  return rows.filter((row) => row.homeClubId === clubId || row.awayClubId === clubId).slice(0, limit);
+}
+
+export async function saveTactics(db: Database, clubId: string, tactics: unknown): Promise<void> {
+  await db.update(clubs).set({ tactics }).where(eq(clubs.id, clubId));
+}
+
+export async function setPlaybackSeconds(db: Database, seasonId: string, seconds: number): Promise<void> {
+  await db.update(seasons).set({ playbackSeconds: seconds }).where(eq(seasons.id, seasonId));
+}
+
+export async function matchTiming(db: Database, matchId: string) {
+  const [row] = await db
+    .select({
+      kickedOffAt: matches.kickedOffAt,
+      playbackSeconds: matches.playbackSeconds,
+      minutes: matches.minutes,
+      publishedAt: matches.publishedAt,
+    })
+    .from(matches)
+    .where(eq(matches.id, matchId));
+  return row ?? null;
 }

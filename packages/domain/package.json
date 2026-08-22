@@ -1,0 +1,9 @@
+{
+  "name": "@ql/domain",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Club aggregate: the rules that span money and squad membership",
+  "type": "module",
+  "exports": { ".": { "types": "./src/index.ts", "default": "./src/index.ts" } },
+  "dependencies": {}
+}

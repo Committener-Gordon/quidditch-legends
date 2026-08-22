@@ -13,6 +13,9 @@
     },
     {
       "path": "../economy"
+    },
+    {
+      "path": "../domain"
     }
   ]
 }

@@ -12,4 +12,5 @@ export { newSeason, reschedule, topDivision, type NewSeasonResult } from './newS
 export { runOffseason, type OffseasonResult } from './offseason.js';
 export { recomputeStandings, computeTable, type TableRow } from './standings.js';
 export { createWorld, SEED_CAPITAL } from './createWorld.js';
+export { executeTransfer, askingPrice, TRANSFER_LEVY, type TransferRequest } from './transfer.js';
 export { isPayday, weekOf, runPayday, aiSpend, payPrizeMoney, repriceSquads } from './finance.js';

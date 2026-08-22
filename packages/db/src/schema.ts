@@ -53,6 +53,8 @@ export const ledgerKindEnum = pgEnum('ledger_kind', [
   'facility',
   'training',
   'medical',
+  'transfer',
+  'levy',
   'adjustment',
 ]);
 export const facilityKindEnum = pgEnum('facility_kind', [

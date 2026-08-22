@@ -151,7 +151,7 @@ twice.
 | `npm run balance -- --n 100000` | Eleven targets, checked by histogram |
 | `npm run matrix` | Archetype round robin: is a squad shape a shortcut? |
 | `npm run tactics` | Tactics round robin: is a setting simply correct? |
-| `npm run test` / `typecheck` | 54 tests |
+| `npm run test` / `typecheck` | 73 tests |
 | **The economy** | |
 | `npm run finances` | Balances, wage bills, upkeep, and the snowball metric |
 | `npm run claim -- --email you@example.com --club ASH` | Hand a club to an account from the CLI |
@@ -244,6 +244,9 @@ says the league works.
 ## Layout
 
 ```
+packages/domain/      the Club aggregate: rules spanning money and squad membership
+  src/club.ts         balance, squad and facility rules; no I/O
+  src/transfer.ts     one definition of what a transfer is
 packages/sim/         the engine: pure, dependency-free, no I/O
   src/rules.ts        every balance dial, versioned  <-- tune here
   src/quaffle.ts      possession, shot, save
@@ -254,6 +257,7 @@ packages/db/          schema, migrations, typed queries
   src/schema.ts       the relational model
   src/mapping.ts      the seam between rows and the engine
   src/queries.ts      read paths, plus replayMatch()
+  src/repositories.ts the seam between rows and the Club aggregate
 packages/harness/     the balance CLI
 apps/worker/          scheduled jobs: matchdays, standings, the off-season
   src/jobs/matchday.ts  the state machine
@@ -374,7 +378,11 @@ intended. Stop that process, or use `npm run db:serve` to share one instance.
 
 ## What is deliberately not here yet
 
-No transfers and no market. Phase four is the meta-game: an NPC-priced market
+No transfer *market*, though the machinery is built and tested: `executeTransfer`
+moves a player and the money in a single transaction through the `Club` aggregate,
+with a 5% levy that leaves the economy rather than moving between clubs. What is
+missing is the market around it — listings, valuations, AI buyers, screens. The
+design note is `docs/aggregates.md`. Phase four is the meta-game: an NPC-priced market
 first, the off-season draft, scout reports you pay for, and contract renewals —
 then player-to-player bidding once the valuation model has survived a season.
 Phase five is the division pyramid, promotion and relegation, and a cup.

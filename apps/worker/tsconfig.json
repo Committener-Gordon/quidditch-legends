@@ -15,6 +15,9 @@
       "path": "../../packages/economy"
     },
     {
+      "path": "../../packages/domain"
+    },
+    {
       "path": "../../packages/db"
     }
   ]

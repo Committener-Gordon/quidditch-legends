@@ -7,8 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 npm install
 npm run db:migrate      # create/update the schema; only this and the worker may migrate
-npm run typecheck       # tsc -b across all six packages
-npm run test            # 54 tests
+npm run typecheck       # all seven packages, plus the test files
+npm run test            # 73 tests
 
 # a playable world from nothing
 npm run world:new       # 12 AI clubs, 168 players, from a seed
@@ -23,19 +23,23 @@ npm run match -- --seed x        # one match, printed
 ```
 
 Run a single test file with `npx tsx --test apps/worker/test/manage.test.ts`.
-Tests use `node:test`; there is no test framework to configure.
+Tests use `node:test`; there is no test framework to configure. Test files sit
+outside every package's `rootDir`, so they are typechecked separately by
+`tsconfig.tests.json` — which `npm run typecheck` runs. Do not skip it: without it,
+a wrong argument count in a test compiles happily.
 
 After changing `packages/db/src/schema.ts`, run `npm run db:generate` (drizzle-kit)
 and commit the generated SQL in `packages/db/drizzle/`.
 
 ## Architecture
 
-Six workspaces. The dependency direction is strictly one-way and worth preserving:
+Seven workspaces. The dependency direction is strictly one-way and worth preserving:
 
 ```
 packages/sim       pure engine: squads + seed + rules -> event log. No I/O at all.
 packages/economy   pure: wages, income, facility costs, training. No I/O.
-packages/db        schema, migrations, queries, auth, the db<->engine mapping
+packages/domain    pure: the Club aggregate -- rules spanning money and squad
+packages/db        schema, migrations, queries, auth, mapping, and the repository seam
 packages/harness   balance CLI; imports sim only, never db
 apps/worker        jobs: matchday, standings, payday, off-season; owns the schema
 apps/web           server-rendered site, no client-side JavaScript
@@ -44,7 +48,7 @@ apps/web           server-rendered site, no client-side JavaScript
 `apps/web` imports jobs from `@ql/worker/jobs` so a single player pressing "play"
 runs the same `runMatchday` the CLI does.
 
-### Five invariants that hold the design together
+### Six invariants that hold the design together
 
 1. **`packages/sim` is pure.** `simulate({home, away, seed}, {rules})` returns an
    event log. No database, no clock, no network, and `Math.random` is banned — a
@@ -68,6 +72,15 @@ runs the same `runMatchday` the CLI does.
 5. **A balance is never stored.** It is `sum(ledger_entries.amount)`. Every posting
    is idempotent on `(club, kind, reference)` — that unique index is what makes
    payday safe to run twice.
+
+6. **Anything spanning money and squad membership goes through the `Club`
+   aggregate.** `packages/domain` owns those rules; `packages/db/src/repositories.ts`
+   is the only place that translates them into rows. A transfer has exactly one
+   definition (`agreeTransfer`) and cannot be reinvented elsewhere. Aggregates ask
+   every question (`canAfford`, `canRelease`, `canSign`) before changing anything, so
+   a refusal costs a discarded object rather than a rollback. `apps/web` imports no
+   ORM at all — if you find yourself reaching for one there, add a query to
+   `packages/db/src/queries.ts` instead.
 
 ### Match rules vs world rules
 
@@ -129,7 +142,9 @@ of 1,537.
 
 ## Not built yet
 
-No transfer market (phase four: NPC-priced first, then player-to-player bidding,
-scout reports, contract renewals) and no promotion/relegation or cup (phase five).
-`clubs.manager_user_id` is the hook phase three plugged into; expect the same
-pattern.
+No transfer *market* — but the machinery underneath it exists and is tested:
+`executeTransfer` moves a player and the money in one transaction, with a 5% levy
+that leaves the economy. Phase four is the market around it: listings, valuations,
+AI buyers and the screens. See `docs/aggregates.md`.
+
+No promotion/relegation or cup (phase five).
